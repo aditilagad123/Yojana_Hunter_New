@@ -486,6 +486,58 @@ SCHEMES_DATA = [
             }
         ],
         "documents": ["Aadhaar Card", "Teacher Service ID / Appointment Letter", "Highest Degree Certificate", "Bank Passbook"]
+    },
+    {
+        "slug": "mukhyamantri-majhi-ladki-bahin",
+        "name": "Mukhyamantri Majhi Ladki Bahin Yojana",
+        "short_description": "Direct monthly financial allowance of ₹1,500 for eligible women in Maharashtra",
+        "description": "Flagship Maharashtra State welfare scheme providing economic independence and nutritional support through ₹1,500 direct monthly bank transfers to married, widowed, divorced, abandoned, and destitute women aged 21-65.",
+        "category": "Women & Child",
+        "department": "Women and Child Development Department, Maharashtra",
+        "level": "State Scheme",
+        "benefits": "₹1,500 / month direct transfer (₹18,000/year)",
+        "official_source_url": "https://ladkibahin.maharashtra.gov.in",
+        "last_verified_date": "18 Oct 2026",
+        "priority": "High Priority",
+        "gender": "Female",
+        "state": "Maharashtra",
+        "eligible_states": ["Maharashtra"],
+        "age_min": 21,
+        "age_max": 65,
+        "income_max": 250000.0,
+        "rules": [
+            {
+                "rule_name": "Gender Eligibility",
+                "rule_description": "Exclusively for Female / Women",
+                "rule_logic": {"field": "gender", "op": "eq", "value": "Female"},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Age Limit",
+                "rule_description": "21 – 65 years",
+                "rule_logic": {"field": "age", "op": "<=", "value": 65},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "State Domicile",
+                "rule_description": "Resident of Maharashtra",
+                "rule_logic": {"field": "state", "op": "eq", "value": "Maharashtra"},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Family Income Limit",
+                "rule_description": "Annual family income ≤ ₹2.5 Lakh",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": "2.5 Lakh"},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            "Aadhaar Card",
+            "Maharashtra Domicile Certificate / Ration Card",
+            "Income Certificate",
+            "Bank Passbook",
+            "Hamipatra (Affidavit)"
+        ]
     }
 ]
 
