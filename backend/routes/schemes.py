@@ -1,3 +1,4 @@
+import re
 import logging
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy.orm import joinedload
@@ -20,9 +21,10 @@ def get_current_profile_dict(db) -> dict:
 
     base_profile = None
     current_user = getattr(g, "current_user", None)
+    profile_id = request.args.get("profile_id")
+    user_profile = None
+
     if current_user:
-        profile_id = request.args.get("profile_id")
-        user_profile = None
         if profile_id:
             try:
                 user_profile = db.query(Profile).filter(Profile.id == int(profile_id), Profile.user_id == current_user.id).first()
@@ -34,31 +36,33 @@ def get_current_profile_dict(db) -> dict:
                 user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).order_by(Profile.id.asc()).first()
         if user_profile:
             base_profile = user_profile.to_dict()
+    elif profile_id:
+        try:
+            user_profile = db.query(Profile).filter(Profile.id == int(profile_id)).first()
+            if user_profile:
+                base_profile = user_profile.to_dict()
+        except (ValueError, TypeError):
+            user_profile = None
 
     if not base_profile:
-        # Check if caller supplied explicit profile parameters in request.args
-        has_params = any(
-            request.args.get(k) is not None
+        # Check if caller supplied explicit meaningful profile parameters in request.args
+        has_meaningful_params = any(
+            request.args.get(k) is not None and str(request.args.get(k)).strip() != ""
             for k in (
                 "profile_occupation", "occupation",
                 "profile_state", "state", "profile_state_domicile", "state_domicile",
                 "profile_age", "age",
                 "profile_income", "annual_income", "annualIncome",
-                "profile_is_farmer", "is_farmer",
-                "profile_is_student", "is_student",
-                "profile_has_business", "has_business",
                 "profile_gender", "gender",
                 "profile_education", "education",
-                "profile_category", "category_caste", "caste",
-                "land_holding_acres", "landholding_acres", "landHoldingAcres",
-                "is_dual_category"
+                "profile_category", "category_caste", "caste"
             )
         )
-        if has_params:
+        if has_meaningful_params:
             base_profile = {}
         else:
-            # If no authenticated user and no query parameters supplied,
-            # do not arbitrarily assign someone else's profile.
+            # If no authenticated profile, no profile_id found, and no meaningful query parameters supplied,
+            # return {} to trigger public catalog mode cleanly.
             return {}
 
     profile_dict = dict(base_profile)
@@ -106,9 +110,11 @@ def get_current_profile_dict(db) -> dict:
     if edu is not None:
         profile_dict["education"] = edu
 
-    cat = request.args.get("profile_category") or request.args.get("category_caste") or request.args.get("caste") or request.args.get("social_category")
+    cat = request.args.get("profile_category") or request.args.get("category_caste") or request.args.get("caste") or request.args.get("social_category") or request.args.get("socialCategory") or request.args.get("category")
     if cat is not None:
         profile_dict["category"] = cat
+        profile_dict["social_category"] = cat
+        profile_dict["socialCategory"] = cat
 
     emp = request.args.get("profile_employment_status") or request.args.get("employment_status") or request.args.get("employmentStatus")
     if emp is not None:
@@ -169,13 +175,39 @@ def get_current_profile_dict(db) -> dict:
         if "profile_is_student" not in request.args and "is_student" not in request.args and not profile_dict.get("is_dual_category"):
             profile_dict["is_student"] = False
     elif final_occ:
-        # Custom non-student non-farmer occupation (e.g. Teacher, Housewife, Shopkeeper, etc.)
+        # Custom non-student non-farmer occupation (e.g. Clerk, Teacher, Housewife, Shopkeeper, Private employee, Govt employee, Daily-wage worker, etc.)
         if not profile_dict.get("is_dual_category"):
             profile_dict["is_student"] = False
             if user_land <= 0:
                 profile_dict["is_farmer"] = False
         if any(b in final_occ for b in ["business", "self-employed", "entrepreneur", "shopkeeper", "artisan", "trader"]):
             profile_dict["has_business"] = True
+        if any(g in final_occ for g in ["government", "govt", "sarkari", "civil service", "ias", "ips", "public sector"]):
+            if "profile_is_govt_employee" not in request.args and "is_govt_employee" not in request.args:
+                profile_dict["is_govt_employee"] = True
+
+
+    # Normalize key variants for downstream eligibility evaluation
+    if profile_dict.get("annual_income") and not profile_dict.get("annualIncome"):
+        profile_dict["annualIncome"] = profile_dict["annual_income"]
+    elif profile_dict.get("annualIncome") and not profile_dict.get("annual_income"):
+        profile_dict["annual_income"] = profile_dict["annualIncome"]
+
+    if profile_dict.get("date_of_birth") and not profile_dict.get("dateOfBirth"):
+        profile_dict["dateOfBirth"] = profile_dict["date_of_birth"]
+    elif profile_dict.get("dateOfBirth") and not profile_dict.get("date_of_birth"):
+        profile_dict["date_of_birth"] = profile_dict["dateOfBirth"]
+
+    if (profile_dict.get("age") is None or profile_dict.get("age") == 0) and profile_dict.get("date_of_birth"):
+        computed_age = SchemeEligibilityService.parse_dob_to_age(profile_dict["date_of_birth"])
+        if computed_age:
+            profile_dict["age"] = computed_age
+
+    resolved_cat = profile_dict.get("category") or profile_dict.get("social_category") or profile_dict.get("socialCategory")
+    if resolved_cat:
+        profile_dict["category"] = resolved_cat
+        profile_dict["social_category"] = resolved_cat
+        profile_dict["socialCategory"] = resolved_cat
 
     return profile_dict
 
@@ -195,6 +227,8 @@ def list_schemes():
         query_filter = request.args.get("q")
         status_filter = request.args.get("filter")  # eligible | possibly_eligible | not_eligible | applications_closed | all
         include_ineligible = request.args.get("include_ineligible", "").lower() in ("true", "1")
+        if status_filter and status_filter.lower() in ("not_eligible", "ineligible", "applications_closed", "closed"):
+            include_ineligible = True
 
         profile_dict = get_current_profile_dict(db)
         logger.info(f"[FLASK /api/schemes INPUT] Profile occupation: '{profile_dict.get('occupation')}', education: '{profile_dict.get('education')}', state: '{profile_dict.get('state')}'")
@@ -223,7 +257,8 @@ def list_schemes():
             query = db.query(Scheme).filter(
                 Scheme.is_active == True,
                 Scheme.status == "published",
-                (Scheme.admin_review_status.in_(["approved", "published"])) | (Scheme.admin_review_status.is_(None))
+                Scheme.admin_review_status.in_(["approved", "published"]),
+                (Scheme.is_test == False) | (Scheme.is_test.is_(None))
             )
             if category_filter and category_filter.lower() != "all":
                 query = query.filter(Scheme.category.ilike(f"%{category_filter}%"))
@@ -240,7 +275,15 @@ def list_schemes():
                 )
             schemes_records = query.all()
             results = []
+            seen_catalog = set()
             for s in schemes_records:
+                key = s.slug or str(s.id)
+                norm = re.sub(r'[^a-z0-9]', '', (s.name or '').lower())
+                if key in seen_catalog or (norm and norm in seen_catalog):
+                    continue
+                seen_catalog.add(key)
+                if norm:
+                    seen_catalog.add(norm)
                 sd = s.to_dict(include_rules=False)
                 sd["eligibilityStatus"] = "possibly_eligible"
                 sd["legacyEligibilityStatus"] = "almost"
@@ -251,6 +294,14 @@ def list_schemes():
 
             total_count = len(results)
             accessible_results = results if is_premium else results[:FREE_SCHEMES_LIMIT]
+            counts_breakdown = {
+                "total_in_db": total_count,
+                "all": total_count,
+                "eligible": 0,
+                "possibly_eligible": total_count,
+                "not_eligible": 0,
+                "applications_closed": 0
+            }
 
             if request.args.get("raw_list") == "true":
                 return jsonify(accessible_results)
@@ -260,20 +311,60 @@ def list_schemes():
                 "total_count": total_count,
                 "total_matching_count": total_count,
                 "accessible_count": len(accessible_results),
+                "counts": counts_breakdown,
                 "is_premium": is_premium,
                 "free_limit": FREE_SCHEMES_LIMIT,
                 "subscription": active_sub.to_dict(include_user=False) if active_sub else None,
                 "has_more": total_count > len(accessible_results)
             })
 
-        schemes = SchemeEligibilityService.get_ranked_schemes_for_profile(
+        # Evaluate complete scheme dataset to provide accurate counters and filter subsets
+        all_evals = SchemeEligibilityService.get_ranked_schemes_for_profile(
             profile_data=profile_dict,
             category_filter=category_filter,
             state_filter=state_filter,
-            status_filter=status_filter,
+            status_filter=None,
             search_query=query_filter,
-            include_ineligible=include_ineligible
+            include_ineligible=True
         )
+
+        total_in_db = db.query(Scheme).filter(
+            Scheme.is_active == True,
+            Scheme.status == "published",
+            Scheme.admin_review_status.in_(["approved", "published"]),
+            (Scheme.is_test == False) | (Scheme.is_test.is_(None))
+        ).count()
+
+        eligible_count = sum(1 for s in all_evals if s.get("eligibilityStatus") == "eligible")
+        possibly_eligible_count = sum(1 for s in all_evals if s.get("eligibilityStatus") in ("possibly_eligible", "almost"))
+        not_eligible_count = sum(1 for s in all_evals if s.get("eligibilityStatus") in ("not_eligible", "ineligible"))
+        closed_count = sum(1 for s in all_evals if s.get("eligibilityStatus") == "applications_closed")
+        relevant_count = eligible_count + possibly_eligible_count
+
+        counts_breakdown = {
+            "total_in_db": total_in_db,
+            "all": relevant_count,
+            "eligible": eligible_count,
+            "possibly_eligible": possibly_eligible_count,
+            "not_eligible": not_eligible_count,
+            "applications_closed": closed_count
+        }
+
+        # Filter schemes according to status_filter
+        s_filter = (status_filter or "").lower()
+        if s_filter in ("eligible",):
+            schemes = [s for s in all_evals if s.get("eligibilityStatus") == "eligible"]
+        elif s_filter in ("possibly_eligible", "almost"):
+            schemes = [s for s in all_evals if s.get("eligibilityStatus") in ("possibly_eligible", "almost")]
+        elif s_filter in ("not_eligible", "ineligible"):
+            schemes = [s for s in all_evals if s.get("eligibilityStatus") in ("not_eligible", "ineligible")]
+        elif s_filter in ("applications_closed", "closed"):
+            schemes = [s for s in all_evals if s.get("eligibilityStatus") == "applications_closed"]
+        elif include_ineligible:
+            schemes = all_evals
+        else:
+            # Default / "all": All relevant schemes (eligible + possibly eligible)
+            schemes = [s for s in all_evals if s.get("eligibilityStatus") in ("eligible", "possibly_eligible", "almost")]
 
         total_count = len(schemes)
         accessible_schemes = schemes if is_premium else schemes[:FREE_SCHEMES_LIMIT]
@@ -293,7 +384,7 @@ def list_schemes():
                 }
             )
 
-        logger.info(f"[FLASK /api/schemes RESPONSE] Returning {len(accessible_schemes)}/{total_count} schemes to citizen (is_premium={is_premium})")
+        logger.info(f"[FLASK /api/schemes RESPONSE] Returning {len(accessible_schemes)}/{total_count} schemes to citizen (is_premium={is_premium}, eligible={eligible_count}, relevant={relevant_count})")
 
         if request.args.get("raw_list") == "true":
             return jsonify(accessible_schemes)
@@ -303,6 +394,7 @@ def list_schemes():
             "total_count": total_count,
             "total_matching_count": total_count,
             "accessible_count": len(accessible_schemes),
+            "counts": counts_breakdown,
             "is_premium": is_premium,
             "free_limit": FREE_SCHEMES_LIMIT,
             "subscription": active_sub.to_dict(include_user=False) if active_sub else None,
@@ -643,6 +735,70 @@ def explain_scheme_eligibility(scheme_id: str):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
+@schemes_bp.route("/<string:scheme_id>/portal-status", methods=["GET"])
+def get_scheme_portal_status(scheme_id):
+    """
+    Checks or returns cached health status of official government portal.
+    Supports ?refresh=true for user retry action without relying on frontend CORS.
+    """
+    db = SessionLocal()
+    try:
+        force_refresh = request.args.get("refresh", "").lower() in ("true", "1")
+
+        # Look up scheme by numeric ID or slug
+        scheme = None
+        if str(scheme_id).isdigit():
+            scheme = db.query(Scheme).filter(Scheme.id == int(scheme_id)).first()
+        if not scheme:
+            scheme = db.query(Scheme).filter(Scheme.slug == str(scheme_id)).first()
+
+        if not scheme:
+            return jsonify({"error": f"Scheme '{scheme_id}' was not found"}), 404
+
+        official_url = scheme.official_source_url
+        if not official_url:
+            return jsonify({
+                "schemeId": scheme.slug,
+                "status": "unverified",
+                "isAvailable": False,
+                "statusMessage": "No official portal link is registered for this scheme.",
+                "officialUrl": None,
+                "alternativeUrl": None
+            }), 200
+
+        from services.portal_health_service import PortalHealthService
+
+        alt_url = getattr(scheme, "alternative_url", None) or PortalHealthService.get_alternative_url(official_url)
+
+        if force_refresh:
+            probe_res = PortalHealthService.probe_url(official_url, force_refresh=True)
+        else:
+            probe_res = PortalHealthService.get_cached_status(official_url, check_if_missing=True)
+
+        return jsonify({
+            "schemeId": scheme.slug,
+            "officialUrl": official_url,
+            "alternativeUrl": alt_url or probe_res.get("alternative_url"),
+            "status": probe_res.get("status", "reachable"),
+            "isAvailable": probe_res.get("is_available", True),
+            "statusCode": probe_res.get("status_code"),
+            "statusMessage": probe_res.get("status_message"),
+            "checkedAt": probe_res.get("checked_at")
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error checking portal status for {scheme_id}: {e}")
+        return jsonify({
+            "schemeId": scheme_id,
+            "status": "temporarily_unavailable",
+            "isAvailable": False,
+            "statusMessage": "The official portal could not be reached. It may be temporarily unavailable. You can review the scheme details and try again later.",
+            "error": str(e)
+        }), 200
     finally:
         db.close()
 

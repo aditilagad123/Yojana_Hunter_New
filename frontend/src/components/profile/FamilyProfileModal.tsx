@@ -41,13 +41,17 @@ const RELATIONSHIP_OPTIONS: { label: string; value: FamilyRelationship; icon: st
 const OCCUPATION_OPTIONS = [
   "Student",
   "Farmer",
+  "Government Employee",
+  "Private-sector Employee",
+  "Clerk",
   "Teacher",
-  "Housewife / Homemaker",
   "Salaried Employee",
   "Self-employed / Business Owner",
   "Shopkeeper",
   "Artisan / Craftsperson",
+  "Daily-wage Worker / Labourer",
   "Woman Entrepreneur",
+  "Housewife / Homemaker",
   "Unemployed Person",
   "Retired / Senior Citizen",
   "Other"
@@ -102,27 +106,28 @@ export function FamilyProfileModal({
 }: FamilyProfileModalProps) {
   const { switchActiveProfile, refreshFamilyProfiles } = useAuth();
 
-  // Step 1: "Self" vs "Relative" selection (only if not editing an existing profile)
+  // Target type: when checking for someone else (!editProfile), always "relative"
   const [targetType, setTargetType] = useState<"self" | "relative">("relative");
-  const [step, setStep] = useState<1 | 2>(editProfile ? 2 : 1);
+  const [step, setStep] = useState<1 | 2>(2);
   const [selectedRelationship, setSelectedRelationship] = useState<FamilyRelationship>("Father");
+  const [customOccupation, setCustomOccupation] = useState("");
   
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Form Fields
+  // Form Fields - initially completely empty for clean independent check
   const [formData, setFormData] = useState({
     name: "",
     age: "",
-    gender: "Male",
-    occupation: "Farmer",
-    state: "Maharashtra",
+    gender: "",
+    occupation: "",
+    state: "",
     district: "",
-    annualIncome: "< 1 Lakh",
-    incomeNumeric: 80000,
-    education: "10th Pass (Matriculation)",
-    category: "General",
-    landHoldingAcres: "2.0",
+    annualIncome: "",
+    incomeNumeric: 0,
+    education: "",
+    category: "",
+    landHoldingAcres: "",
     dateOfBirth: "",
     fatherName: "",
     isDisabled: false,
@@ -134,38 +139,43 @@ export function FamilyProfileModal({
       const isSelf = editProfile.relationship === "Self";
       setTargetType(isSelf ? "self" : "relative");
       setSelectedRelationship((editProfile.relationship as FamilyRelationship) || "Father");
+      const occ = editProfile.occupation || "";
+      const isKnownOcc = OCCUPATION_OPTIONS.includes(occ);
       setFormData({
         name: editProfile.name || editProfile.fullName || "",
         age: editProfile.age ? String(editProfile.age) : "",
-        gender: editProfile.gender || "Male",
-        occupation: editProfile.occupation || "Farmer",
-        state: editProfile.state || "Maharashtra",
+        gender: editProfile.gender || "",
+        occupation: isKnownOcc ? occ : (occ ? "Other" : ""),
+        state: editProfile.state || "",
         district: editProfile.district || "",
-        annualIncome: editProfile.annualIncome || "< 1 Lakh",
-        incomeNumeric: editProfile.incomeNumeric || 80000,
-        education: editProfile.education || "10th Pass (Matriculation)",
-        category: editProfile.category || "General",
-        landHoldingAcres: String(editProfile.landHoldingAcres ?? 0),
+        annualIncome: editProfile.annualIncome || "",
+        incomeNumeric: editProfile.incomeNumeric || 0,
+        education: editProfile.education || "",
+        category: editProfile.category || "",
+        landHoldingAcres: editProfile.landHoldingAcres != null ? String(editProfile.landHoldingAcres) : "",
         dateOfBirth: editProfile.dateOfBirth || "",
         fatherName: editProfile.fatherName || "",
         isDisabled: Boolean(editProfile.isDisabled),
       });
+      setCustomOccupation(!isKnownOcc ? occ : "");
     } else {
-      setStep(1);
+      // Check Schemes for Someone Else: completely fresh, clean slate
+      setStep(2);
       setTargetType("relative");
       setSelectedRelationship("Father");
+      setCustomOccupation("");
       setFormData({
         name: "",
         age: "",
-        gender: "Male",
-        occupation: "Farmer",
-        state: "Maharashtra",
+        gender: "",
+        occupation: "",
+        state: "",
         district: "",
-        annualIncome: "< 1 Lakh",
-        incomeNumeric: 80000,
-        education: "10th Pass (Matriculation)",
-        category: "General",
-        landHoldingAcres: "2.0",
+        annualIncome: "",
+        incomeNumeric: 0,
+        education: "",
+        category: "",
+        landHoldingAcres: "",
         dateOfBirth: "",
         fatherName: "",
         isDisabled: false,
@@ -174,30 +184,9 @@ export function FamilyProfileModal({
     setError(null);
   }, [editProfile, isOpen]);
 
-  // Adjust defaults when relationship changes
+  // When relationship changes, do NOT auto-populate or overwrite user data
   const handleSelectRelationship = (rel: FamilyRelationship) => {
     setSelectedRelationship(rel);
-    if (rel === "Father") {
-      setFormData(prev => ({
-        ...prev,
-        gender: "Male",
-        occupation: prev.occupation || "Farmer",
-        age: prev.age || "60"
-      }));
-    } else if (rel === "Mother") {
-      setFormData(prev => ({
-        ...prev,
-        gender: "Female",
-        occupation: prev.occupation || "Housewife / Homemaker",
-        age: prev.age || "55"
-      }));
-    } else if (rel === "Child") {
-      setFormData(prev => ({
-        ...prev,
-        occupation: "Student",
-        age: prev.age || "18"
-      }));
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -216,13 +205,33 @@ export function FamilyProfileModal({
       return;
     }
 
+    const finalOcc = (formData.occupation === "Other" && customOccupation.trim())
+      ? customOccupation.trim()
+      : formData.occupation.trim();
+
+    if (!finalOcc) {
+      setError("Please select or enter the primary occupation.");
+      return;
+    }
+
+    if (!formData.gender) {
+      setError("Please select gender.");
+      return;
+    }
+
+    if (!formData.state) {
+      setError("Please select the state domicile.");
+      return;
+    }
+
     setSaving(true);
     try {
-      const finalRelationship = targetType === "self" ? "Self" : selectedRelationship;
-      const occLower = formData.occupation.toLowerCase();
+      const finalRelationship = targetType === "self" ? "Self" : (selectedRelationship || "Other");
+      const occLower = finalOcc.toLowerCase();
       const isFarmer = occLower.includes("farmer") || occLower.includes("kisan") || occLower.includes("agri");
       const isStudent = occLower.includes("student");
       const hasBusiness = occLower.includes("business") || occLower.includes("shop") || occLower.includes("self-employed") || occLower.includes("entrepreneur");
+      const isGovtEmployee = occLower.includes("govt") || occLower.includes("government") || occLower.includes("sarkari");
 
       const payload: Partial<UserProfile> = {
         relationship: finalRelationship,
@@ -230,7 +239,7 @@ export function FamilyProfileModal({
         fullName: trimmedName,
         age: parsedAge,
         gender: formData.gender,
-        occupation: formData.occupation,
+        occupation: finalOcc,
         state: formData.state,
         district: formData.district,
         annualIncome: formData.annualIncome,
@@ -242,6 +251,7 @@ export function FamilyProfileModal({
         isFarmer,
         isStudent,
         hasBusiness,
+        isGovtEmployee,
         landHoldingAcres: isFarmer ? (parseFloat(formData.landHoldingAcres) || 0) : 0,
         isDisabled: formData.isDisabled,
       };
@@ -278,10 +288,10 @@ export function FamilyProfileModal({
             </div>
             <div>
               <h2 className="text-lg font-black tracking-tight">
-                {editProfile ? `Edit Profile: ${editProfile.name}` : "Check Schemes: Select Beneficiary"}
+                {editProfile ? `Edit Profile: ${editProfile.name || editProfile.fullName || 'Beneficiary'}` : "Check Schemes for Someone Else"}
               </h2>
               <p className="text-xs text-slate-300">
-                {step === 1 ? "Step 1: Choose who you are checking government schemes for" : "Enter beneficiary details for personalized eligibility"}
+                {editProfile ? "Update details to recalculate personalized eligibility" : "Enter beneficiary details for independent scheme discovery"}
               </p>
             </div>
           </div>
@@ -302,118 +312,36 @@ export function FamilyProfileModal({
             </div>
           )}
 
-          {/* STEP 1: Ask Self vs Relative */}
-          {step === 1 && !editProfile && (
-            <div className="space-y-6 py-2">
-              <div className="text-center space-y-1">
-                <h3 className="text-base sm:text-lg font-extrabold text-brand-navy">
-                  Who would you like to check schemes for?
-                </h3>
-                <p className="text-xs text-slate-500">
-                  You can check schemes for yourself or add multiple family members under your single account.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Option 1: Myself */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTargetType("self");
-                    setSelectedRelationship("Self");
-                    setStep(2);
-                  }}
-                  className="p-5 rounded-2xl border-2 border-slate-200 hover:border-brand-blue bg-white hover:bg-blue-50/40 text-left transition-all hover:shadow-md group flex flex-col justify-between space-y-4"
-                >
-                  <div className="w-12 h-12 rounded-2xl bg-blue-100 text-brand-blue flex items-center justify-center group-hover:scale-105 transition">
-                    <User className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-sm sm:text-base text-brand-navy group-hover:text-brand-blue">
-                      For Myself (Self)
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Check welfare schemes, subsidies, and educational benefits matching your personal criteria.
-                    </p>
-                  </div>
-                  <div className="pt-2 flex items-center text-xs font-bold text-brand-blue gap-1">
-                    <span>Continue for Self</span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition" />
-                  </div>
-                </button>
-
-                {/* Option 2: A Relative */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTargetType("relative");
-                    setStep(2);
-                  }}
-                  className="p-5 rounded-2xl border-2 border-slate-200 hover:border-amber-500 bg-white hover:bg-amber-50/40 text-left transition-all hover:shadow-md group flex flex-col justify-between space-y-4"
-                >
-                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center group-hover:scale-105 transition">
-                    <Heart className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-sm sm:text-base text-brand-navy group-hover:text-amber-700">
-                      For a Relative / Family Member
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Find government benefits for your Father, Mother, Child, Spouse, or other dependents.
-                    </p>
-                  </div>
-                  <div className="pt-2 flex items-center text-xs font-bold text-amber-700 gap-1">
-                    <span>Select Relationship</span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition" />
-                  </div>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 2: Collect Person's Details */}
-          {step === 2 && (
-            <form onSubmit={handleSubmit} className="space-y-5">
-              
-              {/* Back to Step 1 button (if creating new) */}
-              {!editProfile && (
-                <button
-                  type="button"
-                  onClick={() => setStep(1)}
-                  className="text-xs font-bold text-slate-500 hover:text-brand-navy flex items-center gap-1 transition"
-                >
-                  ← Change selection ({targetType === "self" ? "Self" : "Relative"})
-                </button>
-              )}
-
-              {/* Relationship Picker if Relative */}
-              {targetType === "relative" && (
-                <div className="space-y-2">
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-600">
-                    Relationship with Account Holder <span className="text-rose-500">*</span>
-                  </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                    {RELATIONSHIP_OPTIONS.map((rel) => {
-                      const isSelected = selectedRelationship === rel.value;
-                      return (
-                        <button
-                          key={rel.value}
-                          type="button"
-                          onClick={() => handleSelectRelationship(rel.value)}
-                          className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center gap-1.5 ${
-                            isSelected
-                              ? "bg-brand-blue text-white border-brand-blue shadow-sm font-black"
-                              : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 font-bold"
-                          }`}
-                        >
-                          <span className="text-xl">{rel.icon}</span>
-                          <span className="text-xs">{rel.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+          {/* Form: Collect Person's Details */}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Relationship Picker if Relative */}
+            {targetType === "relative" && (
+              <div className="space-y-2">
+                <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-600">
+                  Relationship with Account Holder <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {RELATIONSHIP_OPTIONS.map((rel) => {
+                    const isSelected = selectedRelationship === rel.value;
+                    return (
+                      <button
+                        key={rel.value}
+                        type="button"
+                        onClick={() => handleSelectRelationship(rel.value)}
+                        className={`p-3 rounded-2xl border text-center transition flex flex-col items-center justify-center gap-1.5 ${
+                          isSelected
+                            ? "bg-brand-blue text-white border-brand-blue shadow-sm font-black"
+                            : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200 font-bold"
+                        }`}
+                      >
+                        <span className="text-xl">{rel.icon}</span>
+                        <span className="text-xs">{rel.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
+            )}
 
               {/* Beneficiary Details Form */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -459,6 +387,7 @@ export function FamilyProfileModal({
                       onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
                       className="w-full px-3 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue font-medium"
                     >
+                      <option value="">Select Gender</option>
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                       <option value="Transgender">Transgender</option>
@@ -477,6 +406,7 @@ export function FamilyProfileModal({
                     onChange={(e) => setFormData({ ...formData, state: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue font-medium"
                   >
+                    <option value="">Select State</option>
                     {STATE_OPTIONS.map((st) => (
                       <option key={st} value={st}>{st}</option>
                     ))}
@@ -507,10 +437,23 @@ export function FamilyProfileModal({
                     onChange={(e) => setFormData({ ...formData, occupation: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue font-medium"
                   >
+                    <option value="">Select Occupation</option>
                     {OCCUPATION_OPTIONS.map((occ) => (
                       <option key={occ} value={occ}>{occ}</option>
                     ))}
                   </select>
+                  {formData.occupation === "Other" && (
+                    <div className="pt-1.5">
+                      <input
+                        type="text"
+                        required
+                        value={customOccupation}
+                        onChange={(e) => setCustomOccupation(e.target.value)}
+                        placeholder="Type specific occupation (e.g. Clerk, Electrician, Postman)"
+                        className="w-full px-3.5 py-2 rounded-xl text-xs sm:text-sm bg-slate-50 border border-brand-blue/50 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 font-medium"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Land Holding if Farmer */}
@@ -540,6 +483,7 @@ export function FamilyProfileModal({
                       onChange={(e) => setFormData({ ...formData, education: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue font-medium"
                     >
+                      <option value="">Select Educational Qualification</option>
                       {EDUCATION_OPTIONS.map((edu) => (
                         <option key={edu} value={edu}>{edu}</option>
                       ))}
@@ -559,11 +503,12 @@ export function FamilyProfileModal({
                       setFormData({
                         ...formData,
                         annualIncome: e.target.value,
-                        incomeNumeric: found?.numeric || 80000
+                        incomeNumeric: found?.numeric || 0
                       });
                     }}
                     className="w-full px-3.5 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue font-medium"
                   >
+                    <option value="">Select Annual Income Bracket</option>
                     {INCOME_BRACKETS.map((inc) => (
                       <option key={inc.value} value={inc.value}>{inc.label}</option>
                     ))}
@@ -580,6 +525,7 @@ export function FamilyProfileModal({
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue font-medium"
                   >
+                    <option value="">Select Social Category</option>
                     {["General", "OBC", "SC", "ST", "EWS"].map((cat) => (
                       <option key={cat} value={cat}>{cat}</option>
                     ))}
@@ -608,8 +554,6 @@ export function FamilyProfileModal({
               </div>
 
             </form>
-          )}
-
         </div>
 
       </div>

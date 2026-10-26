@@ -633,6 +633,16 @@ class DiscoveryService:
 
         except Exception as e:
             savepoint.rollback()
+            # If slug collision or concurrent insert occurred, attempt idempotent fetch and update
+            existing_retry = db.query(Scheme).filter(
+                (Scheme.slug == slug) | (Scheme.name.ilike(name))
+            ).first()
+            if existing_retry:
+                existing_retry.last_fetched_at = datetime.datetime.utcnow()
+                existing_retry.grounding_metadata = grounding_meta
+                db.commit()
+                cls.log_job(db, job.id, "INFO", f"Concurrent collision resolved idempotently for '{name}'.")
+                return "duplicate"
             db.rollback()
             cls.log_job(db, job.id, "ERROR", f"Failed to persist scheme '{name}': {e}")
             return "failed"

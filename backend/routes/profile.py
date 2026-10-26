@@ -111,16 +111,17 @@ def populate_profile_from_data(profile: Profile, data: dict):
         profile.state = data["state"]
     if "district" in data:
         profile.district = data["district"]
-    if "category" in data:
-        profile.category = data["category"]
-    if "fatherName" in data:
-        profile.father_name = data["fatherName"]
-    elif "father_name" in data:
-        profile.father_name = data["father_name"]
-    if "dateOfBirth" in data:
-        profile.date_of_birth = data["dateOfBirth"]
-    elif "date_of_birth" in data:
-        profile.date_of_birth = data["date_of_birth"]
+    if "category" in data or "social_category" in data or "socialCategory" in data or "caste" in data:
+        profile.category = data.get("category") or data.get("social_category") or data.get("socialCategory") or data.get("caste")
+    if "fatherName" in data or "father_name" in data:
+        profile.father_name = data.get("fatherName") or data.get("father_name")
+    if "dateOfBirth" in data or "date_of_birth" in data or "dob" in data:
+        profile.date_of_birth = data.get("dateOfBirth") or data.get("date_of_birth") or data.get("dob")
+        if (profile.age is None or profile.age == 0) and profile.date_of_birth:
+            from services.eligibility_service import SchemeEligibilityService
+            calc_age = SchemeEligibilityService.parse_dob_to_age(profile.date_of_birth)
+            if calc_age:
+                profile.age = calc_age
     if "language" in data:
         profile.preferred_language = data["language"]
 
@@ -195,19 +196,6 @@ def get_all_profiles():
             Profile.id.asc()
         ).all()
 
-        if not profiles:
-            # Ensure primary Self profile exists
-            self_profile = Profile(
-                user_id=user.id,
-                relationship="Self",
-                full_name=user.email.split("@")[0].capitalize() if user.email else "Citizen",
-                completeness_percent=0,
-                preferred_language="en"
-            )
-            db.add(self_profile)
-            db.commit()
-            profiles = [self_profile]
-
         return jsonify({
             "profiles": [p.to_dict() for p in profiles],
             "count": len(profiles)
@@ -275,15 +263,70 @@ def get_profile():
                     profile = db.query(Profile).filter(Profile.user_id == user.id).order_by(Profile.id.asc()).first()
 
             if not profile:
-                profile = Profile(
-                    user_id=user.id,
-                    relationship="Self",
-                    full_name=user.email.split("@")[0].capitalize() if user.email else "Citizen",
-                    completeness_percent=0,
-                    preferred_language="en"
-                )
-                db.add(profile)
-                db.commit()
+                # Do not save profile to database immediately.
+                # Every newly registered citizen starts with a clean, independent profile.
+                clean_name = user.email.split("@")[0].capitalize() if user.email else "Citizen"
+                level_info = compute_user_level(None, 0, 0, 0)
+                clean_profile = {
+                    "id": None,
+                    "userId": user.id,
+                    "user_id": user.id,
+                    "relationship": "Self",
+                    "name": clean_name,
+                    "fullName": clean_name,
+                    "full_name": clean_name,
+                    "avatarUrl": None,
+                    "avatar_url": None,
+                    "age": 0,
+                    "gender": "",
+                    "occupation": "",
+                    "employmentStatus": "",
+                    "employment_status": "",
+                    "annualIncome": "",
+                    "annual_income": "",
+                    "incomeNumeric": None,
+                    "income_numeric": None,
+                    "education": "",
+                    "state": "",
+                    "district": "",
+                    "category": "",
+                    "fatherName": "",
+                    "father_name": "",
+                    "dateOfBirth": "",
+                    "date_of_birth": "",
+                    "landHoldingAcres": 0.0,
+                    "land_holding_acres": 0.0,
+                    "isDisabled": False,
+                    "is_disabled": False,
+                    "isFarmer": False,
+                    "is_farmer": False,
+                    "isStudent": False,
+                    "is_student": False,
+                    "course": "",
+                    "institution": "",
+                    "hasBusiness": False,
+                    "has_business": False,
+                    "businessType": "",
+                    "business_type": "",
+                    "disabilityType": "",
+                    "disability_type": "",
+                    "isTaxPayer": False,
+                    "is_tax_payer": False,
+                    "isGovtEmployee": False,
+                    "is_govt_employee": False,
+                    "language": "en",
+                    "preferred_language": "en",
+                    "completenessPercent": 0,
+                    "completeness_percent": 0,
+                    "isProfileSaved": False,
+                    "is_profile_saved": False,
+                    "updatedAt": None,
+                    "userLevel": level_info
+                }
+                res_dict = dict(clean_profile)
+                res_dict["profile"] = clean_profile
+                res_dict["userLevel"] = level_info
+                return jsonify(res_dict), 200
 
             activity_count = db.query(AuditLog).filter(AuditLog.user_id == user.id).count()
             saved_count = db.query(SavedScheme).filter(SavedScheme.user_id == user.id).count()
@@ -454,6 +497,43 @@ def update_profile(profile_id: int = None):
             profile = db.query(Profile).filter(Profile.user_id == user.id, Profile.relationship == "Self").first()
             if not profile:
                 profile = db.query(Profile).filter(Profile.user_id == user.id).order_by(Profile.id.asc()).first()
+
+        # Required fields validation before saving to PostgreSQL
+        name_val = (data.get("name") or data.get("fullName") or data.get("full_name") or (profile.full_name if profile else "") or "").strip()
+        occ_val = (data.get("occupation") or (profile.occupation if profile else "") or "").strip()
+        state_val = (data.get("state") or (profile.state if profile else "") or "").strip()
+        age_val = data.get("age") if data.get("age") is not None else (profile.age if profile else None)
+
+        if not name_val:
+            return jsonify({
+                "error": "Validation error",
+                "message": "Full name is required to save your profile."
+            }), 400
+
+        if not occ_val or occ_val.lower() == "other":
+            return jsonify({
+                "error": "Validation error",
+                "message": "Please select or enter a valid occupation."
+            }), 400
+
+        if not state_val or state_val.lower() == "other":
+            return jsonify({
+                "error": "Validation error",
+                "message": "Please select or enter your state of residence."
+            }), 400
+
+        try:
+            age_int = int(age_val) if age_val is not None else 0
+            if age_int < 1 or age_int > 120:
+                return jsonify({
+                    "error": "Validation error",
+                    "message": "Please enter a valid age between 1 and 120."
+                }), 400
+        except (ValueError, TypeError):
+            return jsonify({
+                "error": "Validation error",
+                "message": "Please enter a valid numeric age."
+            }), 400
 
         if not profile:
             profile = Profile(user_id=user.id, relationship="Self")

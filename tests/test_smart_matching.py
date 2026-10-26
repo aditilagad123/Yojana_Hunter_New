@@ -319,6 +319,10 @@ def test_9_admin_scheme_lifecycle(client, admin_token):
     assert res_toggle_back.status_code == 200
     assert res_toggle_back.get_json()["isActive"] is True
 
+    # 7. Cleanup: Delete test scheme to prevent persistence in production database
+    res_cleanup = client.delete(f"/api/admin/schemes/{scheme_id}", headers=headers)
+    assert res_cleanup.status_code == 200
+
 
 def test_10_unauthorized_user_rejected_on_admin_routes(client, citizen_token):
     """Citizen or unauthenticated user is strictly forbidden from admin routes"""

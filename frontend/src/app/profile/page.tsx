@@ -181,34 +181,34 @@ function ProfileContent() {
       id: p.id,
       relationship: (p.relationship as FamilyRelationship) || "Self",
       name: p.name || p.fullName || user?.name || user?.email?.split("@")[0] || "",
-      age: p.age || 0,
-      dateOfBirth: p.dateOfBirth || "",
-      gender: p.gender || "",
-      occupation: p.occupation || "",
-      annualIncome: p.annualIncome || "",
-      incomeNumeric: p.incomeNumeric || 0,
-      education: p.education || "",
-      state: p.state || "",
-      district: p.district || "",
-      category: p.category || "",
-      fatherName: p.fatherName || "",
-      completenessPercent: p.completenessPercent || 0,
+      age: saved ? (p.age || 0) : 0,
+      dateOfBirth: saved ? (p.dateOfBirth || "") : "",
+      gender: saved ? (p.gender || "") : "",
+      occupation: saved ? (p.occupation || "") : "",
+      annualIncome: saved ? (p.annualIncome || "") : "",
+      incomeNumeric: saved ? (p.incomeNumeric || 0) : 0,
+      education: saved ? (p.education || "") : "",
+      state: saved ? (p.state || "") : "",
+      district: saved ? (p.district || "") : "",
+      category: saved ? (p.category || "") : "",
+      fatherName: saved ? (p.fatherName || "") : "",
+      completenessPercent: saved ? (p.completenessPercent || 0) : 0,
       language: p.language || "en",
-      isFarmer: Boolean(p.isFarmer),
-      landHoldingAcres: p.landHoldingAcres || 0,
-      isStudent: Boolean(p.isStudent),
-      course: p.course || "",
-      institution: p.institution || "",
-      hasBusiness: Boolean(p.hasBusiness),
-      businessType: p.businessType || "",
-      isDisabled: Boolean(p.isDisabled),
-      disabilityType: p.disabilityType || "",
-      isTaxPayer: Boolean(p.isTaxPayer),
-      isGovtEmployee: Boolean(p.isGovtEmployee),
-      employmentStatus: p.employmentStatus || ""
+      isFarmer: saved ? Boolean(p.isFarmer) : false,
+      landHoldingAcres: saved ? (p.landHoldingAcres || 0) : 0,
+      isStudent: saved ? Boolean(p.isStudent) : false,
+      course: saved ? (p.course || "") : "",
+      institution: saved ? (p.institution || "") : "",
+      hasBusiness: saved ? Boolean(p.hasBusiness) : false,
+      businessType: saved ? (p.businessType || "") : "",
+      isDisabled: saved ? Boolean(p.isDisabled) : false,
+      disabilityType: saved ? (p.disabilityType || "") : "",
+      isTaxPayer: saved ? Boolean(p.isTaxPayer) : false,
+      isGovtEmployee: saved ? Boolean(p.isGovtEmployee) : false,
+      employmentStatus: saved ? (p.employmentStatus || "") : ""
     });
 
-    if (p.occupation) {
+    if (saved && p.occupation) {
       const isPredefined = OCCUPATION_OPTIONS.filter(o => o !== "Other").includes(p.occupation);
       if (!isPredefined || p.occupation === "Other") {
         setIsCustomOccupation(true);
@@ -577,16 +577,17 @@ function ProfileContent() {
 
         {/* Notifications / Alerts */}
         {saveSuccess && (
-          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm flex items-center justify-between gap-3 shadow-xs animate-fadeIn">
+          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-fadeIn">
             <div className="flex items-center gap-2 font-semibold">
               <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              <span>Profile saved and validated successfully! You can now find matching government schemes.</span>
+              <span>Profile saved successfully! Scheme recommendations have been automatically re-evaluated for your updated details.</span>
             </div>
             <Link
               href="/schemes"
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shrink-0"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shrink-0 shadow-xs transition"
             >
-              See Schemes →
+              <span>View Eligible Schemes</span>
+              <span>→</span>
             </Link>
           </div>
         )}

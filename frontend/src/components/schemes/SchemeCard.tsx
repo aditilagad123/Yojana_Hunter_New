@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { GraduationCap, Award, Wrench, FileWarning, ArrowRight, BookOpen, AlertCircle, Sparkles, ExternalLink, ShieldCheck, Bookmark, Loader2 } from "lucide-react";
+import { GraduationCap, Award, Wrench, FileWarning, BookOpen, AlertCircle, Sparkles, ArrowRight, ShieldCheck, Bookmark, Loader2, ExternalLink } from "lucide-react";
 import { Scheme } from "@/types/scheme";
 import { EligibilityBadge } from "./EligibilityBadge";
 import { useAuth } from "@/context/AuthContext";
@@ -104,7 +104,6 @@ export const SchemeCard: React.FC<Props> = ({ scheme }) => {
     return null;
   };
 
-  const officialTargetUrl = scheme.applicationUrl || scheme.officialUrl;
 
   return (
     <div className="p-4 sm:p-5 bg-white rounded-2xl border border-brand-border shadow-card hover:shadow-card-hover transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -113,9 +112,14 @@ export const SchemeCard: React.FC<Props> = ({ scheme }) => {
         {getIcon()}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2.5 flex-wrap">
-            <h3 className="font-bold text-base sm:text-lg text-brand-navy">
-              {scheme.name}
-            </h3>
+            <Link
+              href={`/schemes/${scheme.slug || scheme.id}`}
+              className="hover:text-brand-blue transition"
+            >
+              <h3 className="font-bold text-base sm:text-lg text-brand-navy">
+                {scheme.name}
+              </h3>
+            </Link>
             <EligibilityBadge status={scheme.eligibilityStatus} size="sm" />
             {getApplicationWindowBadge()}
           </div>
@@ -181,9 +185,10 @@ export const SchemeCard: React.FC<Props> = ({ scheme }) => {
         </div>
       </div>
 
-      {/* Right Action Buttons */}
+      {/* Right Action Options */}
       <div className="shrink-0 flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
+          {/* Option 1: Save */}
           <button
             onClick={handleToggleBookmark}
             disabled={saving}
@@ -201,26 +206,32 @@ export const SchemeCard: React.FC<Props> = ({ scheme }) => {
             )}
           </button>
 
-          {officialTargetUrl && (
-            <a
-              href={officialTargetUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition border border-slate-200"
-              title="Open official government scheme page"
-            >
-              <span>Portal</span>
-              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-            </a>
-          )}
-
+          {/* Option 2: View Details */}
           <Link
             href={`/schemes/${scheme.slug || scheme.id}`}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-brand-blue hover:bg-brand-blue-dark shadow-xs transition"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition"
+            title="View scheme eligibility and details"
           >
-            <span>Details</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <span>View Details</span>
           </Link>
+
+          {/* Main Action: Verified Official Destination URL */}
+          {(scheme.applicationUrl || scheme.officialUrl) && (
+            <a
+              href={scheme.applicationUrl || scheme.officialUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-brand-blue hover:bg-brand-blue-dark shadow-xs transition"
+              title={`Open official portal for ${scheme.name}`}
+            >
+              <span>
+                {scheme.applicationUrl && scheme.applicationUrl !== scheme.officialUrl
+                  ? "Apply Online"
+                  : "Official Portal"}
+              </span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
         </div>
       </div>
     </div>

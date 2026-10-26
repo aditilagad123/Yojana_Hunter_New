@@ -23,7 +23,7 @@ import {
   Bookmark,
   Loader2,
   Lock,
-  Crown
+  Crown,
 } from "lucide-react";
 import { getSchemeById, explainScheme, SchemeExplanationResult } from "@/services/schemeService";
 import { Scheme } from "@/types/scheme";
@@ -33,6 +33,7 @@ import { getStoredProfile } from "@/lib/storage";
 import { saveScheme, removeSavedScheme, checkIsSaved } from "@/services/savedSchemeService";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { SubscriptionModal } from "@/components/subscription/SubscriptionModal";
+import { isValidHttpUrl } from "@/lib/urlUtils";
 
 function SchemeDetailsContent() {
   const params = useParams();
@@ -314,6 +315,9 @@ function SchemeDetailsContent() {
               </span>
             </div>
           )}
+          <p className="text-[11px] text-slate-500 italic pt-1">
+            * Note: Eligibility match is an automated estimate based on your profile criteria. Official approval is subject to government verification of original documents.
+          </p>
         </div>
 
         {/* Gemini AI Grounded Explanation Card */}
@@ -581,72 +585,92 @@ function SchemeDetailsContent() {
         )}
 
         {/* Official Source & Verification Card */}
-        <div className="p-6 bg-white rounded-2xl border border-brand-border shadow-card space-y-3">
-          <h3 className="font-extrabold text-sm sm:text-base text-brand-navy">
-            Official Government Source & Verification
-          </h3>
-          <div className="space-y-2 text-xs sm:text-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <span className="text-slate-500 font-medium">Official Portal:</span>
-              <a
-                href={scheme.officialUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-bold text-brand-blue hover:underline break-all"
-              >
-                <span>{scheme.officialUrl}</span>
-                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-              </a>
-            </div>
+        {(() => {
+          // Select dedicated application portal or official website
+          const candidateUrl = scheme.applicationUrl || scheme.officialUrl;
+          const hasValidUrl = isValidHttpUrl(candidateUrl);
+          const isUnavailable = scheme.portalStatus === "temporarily_unavailable" || scheme.portalStatus === "unverified";
+          const isVerifiedAndReachable = hasValidUrl && !isUnavailable && (scheme.portalStatus === "reachable" || scheme.portalStatus === undefined);
 
-            {scheme.applicationUrl && scheme.applicationUrl !== scheme.officialUrl && (
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-slate-500 font-medium">Application Link:</span>
-                <a
-                  href={scheme.applicationUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 font-bold text-emerald-600 hover:underline break-all"
-                >
-                  <span>{scheme.applicationUrl}</span>
-                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                </a>
+          return (
+            <>
+              <div className="p-6 bg-white rounded-2xl border border-brand-border shadow-card space-y-4">
+                <h3 className="font-extrabold text-sm sm:text-base text-brand-navy">
+                  Official Government Source & Verification
+                </h3>
+
+                <div className="space-y-3 text-xs sm:text-sm">
+                  {isVerifiedAndReachable ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="text-slate-500 font-medium">Official Website:</span>
+                      <a
+                        href={candidateUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 font-bold text-brand-blue hover:underline break-all"
+                        title="Open verified official government website in a new tab"
+                      >
+                        <span>{candidateUrl}</span>
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl space-y-1 text-xs text-amber-800">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Official application link could not be verified</span>
+                      </div>
+                      <p className="text-amber-700 leading-relaxed">
+                        {scheme.portalStatusMessage || "The official application portal is currently undergoing maintenance or could not be reached. Scheme eligibility details can still be reviewed below."}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-slate-500 text-xs">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Last Verified Date: {scheme.lastVerifiedDate || "12 Oct 2026"}</span>
+                    </span>
+                    {isVerifiedAndReachable ? (
+                      <span className="text-2xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                        <span>Verified Government Portal</span>
+                      </span>
+                    ) : (
+                      <span className="text-2xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        Unverified Link
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
-            )}
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-slate-500 text-xs">
-              <span className="flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span>Last Verified Date: {scheme.lastVerifiedDate || "12 Oct 2026"}</span>
-              </span>
-              <span className="text-2xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                Official Government Portal
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Button */}
-        <div className="pt-2">
-          {scheme.applicationUrl || scheme.officialUrl ? (
-            <a
-              href={scheme.applicationUrl || scheme.officialUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-3.5 px-6 rounded-xl bg-brand-blue hover:bg-brand-blue-dark text-white font-extrabold text-center text-sm shadow-md transition flex items-center justify-center gap-2"
-            >
-              <span>Apply on Official Portal</span>
-              <ExternalLink className="w-4 h-4" />
-            </a>
-          ) : (
-            <button
-              onClick={() => router.push("/action-plan")}
-              className="w-full py-3.5 px-6 rounded-xl bg-brand-blue hover:bg-brand-blue-dark text-white font-extrabold text-center text-sm shadow-md transition"
-            >
-              Start Application
-            </button>
-          )}
-        </div>
+              {/* Action Button: Exactly one official URL option */}
+              <div className="pt-2">
+                {isVerifiedAndReachable ? (
+                  <a
+                    href={candidateUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3.5 px-6 rounded-xl bg-brand-blue hover:bg-brand-blue-dark text-white font-extrabold text-center text-sm shadow-md transition flex items-center justify-center gap-2"
+                    title="Apply on official government website in a new tab"
+                  >
+                    <span>Apply on Official Website</span>
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                ) : (
+                  <button
+                    onClick={() => router.push("/action-plan")}
+                    className="w-full py-3.5 px-6 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-extrabold text-center text-sm shadow-md transition flex items-center justify-center gap-2"
+                  >
+                    <span>Start Application via Action Plan</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </>
+          );
+        })()}
       </div>
     </main>
   );

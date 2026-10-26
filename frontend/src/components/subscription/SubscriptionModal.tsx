@@ -13,16 +13,23 @@ import {
   Lock, 
   Info, 
   Check, 
-  Minus,
   RotateCcw,
   RefreshCw,
-  Zap
+  Zap,
+  CreditCard,
+  Building
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import { 
   fetchSubscriptionPlans, 
   fetchMySubscriptionStatus, 
   submitSubscriptionRequest, 
-  cancelSubscriptionRequest 
+  cancelSubscriptionRequest,
+  initiateSubscriptionCheckout,
+  verifySubscriptionPayment,
+  loadRazorpayCheckoutScript,
+  reportPaymentFailure,
+  subscribeToSubscriptionUpdates
 } from "@/services/subscriptionService";
 import { 
   SubscriptionPlan, 
@@ -48,17 +55,25 @@ export function SubscriptionModal({
   totalMatchingCount,
   accessibleCount = 5
 }: SubscriptionModalProps) {
+  const { user, profile } = useAuth();
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [comparison, setComparison] = useState<PlanComparisonRow[]>([]);
   const [status, setStatus] = useState<UserSubscriptionStatus | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<SubscriptionPlanId>(initialPlanId);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  
-  // Confirmation step state
+
+  // Confirmation modal state & form fields
   const [showConfirm, setShowConfirm] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking">("upi");
+  const [bankName, setBankName] = useState("");
+  const [bankAccountType, setBankAccountType] = useState<"savings" | "current">("savings");
+  const [formError, setFormError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
 
   const loadPlansAndStatus = async () => {
@@ -73,11 +88,13 @@ export function SubscriptionModal({
       setComparison(plansData.comparison);
       setStatus(userStatus);
 
-      if (userStatus?.pending_request) {
+      if (userStatus?.approved_for_payment) {
+        setSelectedPlanId((userStatus.approved_for_payment.planId as SubscriptionPlanId) || "yearly");
+      } else if (userStatus?.pending_request) {
         setSelectedPlanId((userStatus.pending_request.planId as SubscriptionPlanId) || "yearly");
       }
     } catch {
-      // Handled gracefully via fallback in service
+      // Fallback handled in services
     } finally {
       setLoading(false);
     }
@@ -87,8 +104,46 @@ export function SubscriptionModal({
     if (isOpen) {
       loadPlansAndStatus();
       setShowConfirm(false);
+      setFeedback(null);
     }
   }, [isOpen]);
+
+  // Real-time status update listener
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const unsubscribe = subscribeToSubscriptionUpdates((event) => {
+      if (event.type === "payment_approved") {
+        setFeedback({
+          type: "success",
+          message: "🎉 Subscription approved & activated! All government schemes unlocked."
+        });
+        loadPlansAndStatus();
+        if (onSubscriptionUpdated) onSubscriptionUpdated();
+      } else if (event.type === "payment_rejected") {
+        const reason = event.data?.rejection_reason || event.data?.rejectionReason || "Request rejected by administrator.";
+        setFeedback({
+          type: "error",
+          message: `Subscription request rejected: ${reason}`
+        });
+        loadPlansAndStatus();
+      } else if (event.type === "poll_sync" && event.data) {
+        const s: UserSubscriptionStatus = event.data;
+        if (s.is_premium && !status?.is_premium) {
+          setFeedback({
+            type: "success",
+            message: "🎉 Your subscription is now active! All schemes unlocked."
+          });
+          setStatus(s);
+          if (onSubscriptionUpdated) onSubscriptionUpdated();
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isOpen, status]);
 
   if (!isOpen) return null;
 
@@ -98,317 +153,457 @@ export function SubscriptionModal({
     setSelectedPlanId(planId);
     setShowConfirm(true);
     setFeedback(null);
+    setFormError(null);
+    setPhoneError(null);
+    // Explicitly empty phone number: Never prefill from profile/stored user data
+    setPhoneNumber("");
   };
 
-  const handleSubmitRequest = async () => {
-    if (!selectedPlan) return;
+  /**
+   * Executes authentic Razorpay Checkout modal
+   */
+  const executeRazorpayCheckout = async (planId: string) => {
+    setFormError(null);
+    setPhoneError(null);
+
+    const cleanPhone = phoneNumber.trim().replace(/\D/g, "");
+    if (!cleanPhone || cleanPhone.length !== 10 || !["6", "7", "8", "9"].includes(cleanPhone[0])) {
+      setPhoneError("Please enter a valid 10-digit mobile number");
+      return;
+    }
+
     setSubmitting(true);
     setFeedback(null);
 
-    const res = await submitSubscriptionRequest(selectedPlan.id, notes);
-    setSubmitting(false);
-
-    if (res.success) {
-      setFeedback({
-        type: "success",
-        message: res.message
-      });
-      setShowConfirm(false);
-      // Reload status
-      const updatedStatus = await fetchMySubscriptionStatus();
-      setStatus(updatedStatus);
-      if (onSubscriptionUpdated) onSubscriptionUpdated();
-    } else {
+    // 1. Ensure Razorpay SDK script is available
+    const isScriptLoaded = await loadRazorpayCheckoutScript();
+    if (!isScriptLoaded) {
+      setSubmitting(false);
       setFeedback({
         type: "error",
-        message: res.message
+        message: "Unable to load Razorpay payment SDK. Please verify internet connectivity."
+      });
+      return;
+    }
+
+    // 2. Initialize checkout session via Flask backend
+    const initRes = await initiateSubscriptionCheckout(
+      planId,
+      cleanPhone
+    );
+
+    if (!initRes.success || !initRes.data) {
+      setSubmitting(false);
+      let errorMsg = initRes.message || "Failed to initialize payment checkout.";
+      if (initRes.diagnostic?.action_required) {
+        errorMsg += `\n\nAction Required: ${initRes.diagnostic.action_required}`;
+      }
+      setFeedback({
+        type: "error",
+        message: errorMsg
+      });
+      return;
+    }
+
+    const checkoutData = initRes.data;
+
+    // 3. Configure and open official Razorpay Checkout modal
+    const options: any = {
+      key: checkoutData.key_id,
+      amount: checkoutData.amount_in_paise,
+      currency: checkoutData.currency || "INR",
+      name: "Yojana Hunter",
+      description: `${checkoutData.plan_name} (${selectedPlan?.duration_label || "Access"})`,
+      image: "/favicon.ico",
+      handler: async function (response: any) {
+        setVerifying(true);
+        setFeedback({
+          type: "info",
+          message: "Verifying payment signature with Razorpay..."
+        });
+
+        const verifyRes = await verifySubscriptionPayment({
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_order_id: response.razorpay_order_id || checkoutData.order_id,
+          razorpay_subscription_id: response.razorpay_subscription_id || checkoutData.subscription_id,
+          razorpay_signature: response.razorpay_signature
+        });
+
+        setVerifying(false);
+        setSubmitting(false);
+
+        if (verifyRes.success) {
+          setShowConfirm(false);
+          setFeedback({
+            type: "success",
+            message: "🎉 Payment verified successfully! Your subscription is now active."
+          });
+          const updatedStatus = await fetchMySubscriptionStatus();
+          setStatus(updatedStatus);
+          if (onSubscriptionUpdated) onSubscriptionUpdated();
+        } else {
+          setFeedback({
+            type: "error",
+            message: verifyRes.message || "Payment verification failed."
+          });
+        }
+      },
+      prefill: {
+        name: checkoutData.user?.name || "",
+        email: checkoutData.user?.email || "",
+        contact: checkoutData.user?.contact || ""
+      },
+      notes: {
+        subscription_id: checkoutData.subscription_id || "",
+        order_id: checkoutData.order_id || "",
+        plan_id: checkoutData.plan_id || "",
+        plan_name: checkoutData.plan_name || "",
+        request_id: String(checkoutData.request_id || "")
+      },
+      // Priority display configuration for dynamic UPI QR Code and essential instruments
+      config: {
+        display: {
+          blocks: {
+            upi_qr: {
+              name: "Pay via UPI QR / Apps",
+              instruments: [
+                {
+                  method: "upi",
+                  flows: ["qr", "intent", "collect"]
+                }
+              ]
+            },
+            other: {
+              name: "Cards & Other Methods",
+              instruments: [
+                { method: "card" },
+                { method: "netbanking" },
+                { method: "wallet" }
+              ]
+            }
+          },
+          sequence: ["block.upi_qr", "block.other"],
+          preferences: {
+            show_default_blocks: true
+          }
+        }
+      },
+      theme: {
+        color: "#f59e0b"
+      },
+      modal: {
+        ondismiss: function () {
+          setSubmitting(false);
+          setFeedback({
+            type: "info",
+            message: "Checkout window closed. No payment was charged."
+          });
+        }
+      }
+    };
+
+    if (checkoutData.order_id && checkoutData.order_id.startsWith("order_")) {
+      options.order_id = checkoutData.order_id;
+      options.amount = checkoutData.amount_in_paise;
+      options.currency = checkoutData.currency || "INR";
+    } else if (checkoutData.subscription_id && checkoutData.subscription_id.startsWith("sub_") && !checkoutData.order_id) {
+      options.subscription_id = checkoutData.subscription_id;
+      // For standalone Razorpay Subscriptions without an order_id
+      delete options.amount;
+      delete options.currency;
+    } else if (checkoutData.order_id) {
+      options.order_id = checkoutData.order_id;
+      options.amount = checkoutData.amount_in_paise;
+      options.currency = checkoutData.currency || "INR";
+    }
+
+    try {
+      const rzp = new (window as any).Razorpay(options);
+
+      rzp.on("payment.failed", async function (resp: any) {
+        setSubmitting(false);
+        const err = resp?.error || {};
+        const code = err.code || "PAYMENT_FAILED";
+        const description = err.description || "Payment was declined by bank or gateway.";
+        const source = err.source || "gateway";
+        const step = err.step || "payment_authorization";
+        const reason = err.reason || "unknown";
+
+        try {
+          await reportPaymentFailure({
+            subscription_id: checkoutData.subscription_id,
+            payment_id: err.metadata?.payment_id,
+            error_code: code,
+            error_description: description,
+            error_source: source,
+            error_step: step,
+            error_reason: reason
+          });
+        } catch {
+          // non-blocking
+        }
+
+        setFeedback({
+          type: "error",
+          message: `Payment Failed: ${description}. Please retry with another payment method in Razorpay.`
+        });
+      });
+
+      rzp.open();
+    } catch (err: any) {
+      setSubmitting(false);
+      setFeedback({
+        type: "error",
+        message: `Failed to open Razorpay checkout: ${err?.message || "Unknown error"}`
       });
     }
   };
 
   const handleCancelRequest = async (requestId: number) => {
-    if (!confirm("Are you sure you want to cancel your pending subscription request?")) return;
     setCancelling(true);
-    setFeedback(null);
-
-    const res = await cancelSubscriptionRequest(requestId);
-    setCancelling(false);
-
-    if (res.success) {
-      setFeedback({
-        type: "info",
-        message: res.message
-      });
-      const updatedStatus = await fetchMySubscriptionStatus();
-      setStatus(updatedStatus);
-      if (onSubscriptionUpdated) onSubscriptionUpdated();
-    } else {
-      setFeedback({
-        type: "error",
-        message: res.message
-      });
+    try {
+      const res = await cancelSubscriptionRequest(requestId);
+      if (res.success) {
+        setFeedback({ type: "info", message: "Subscription request cancelled." });
+        loadPlansAndStatus();
+      } else {
+        setFeedback({ type: "error", message: res.message });
+      }
+    } catch {
+      setFeedback({ type: "error", message: "Failed to cancel request." });
+    } finally {
+      setCancelling(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
       <div 
-        className="relative w-full max-w-5xl bg-gradient-to-b from-slate-900 via-slate-900 to-brand-navy border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden text-slate-100 my-8"
+        className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl shadow-amber-500/10 overflow-hidden my-8"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Glow Effects */}
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-brand-blue/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute top-1/3 right-10 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-
-        {/* Header Bar */}
-        <div className="relative px-6 py-5 border-b border-slate-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-black">
-              <Crown className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
-                  Yojana Hunter <span className="bg-gradient-to-r from-amber-400 to-amber-200 bg-clip-text text-transparent">Premium Access</span>
-                </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  OTT Tier
-                </span>
+        {/* Top Header Banner */}
+        <div className="relative px-6 py-6 border-b border-slate-800 bg-gradient-to-r from-amber-500/10 via-slate-900 to-amber-500/5">
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold">
+                <Crown className="w-3.5 h-3.5" />
+                <span>Yojana Hunter Premium Pass</span>
               </div>
-              <p className="text-xs text-slate-400">
-                Unlock all matching government schemes, full application procedures, and direct portal links
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                Unlock All Matching Government Schemes
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-400">
+                Direct application links, document checklists, and eligibility AI criteria for every scheme.
               </p>
             </div>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+              aria-label="Close modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white transition"
-            aria-label="Close modal"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Content Body */}
-        <div className="p-6 sm:p-8 space-y-6 max-h-[80vh] overflow-y-auto">
-          {/* Status Banners */}
-          {feedback && (
-            <div className={`p-4 rounded-2xl text-xs sm:text-sm font-semibold flex items-center gap-3 border ${
-              feedback.type === "success" 
-                ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-200" 
-                : feedback.type === "error"
-                ? "bg-rose-950/40 border-rose-500/40 text-rose-200"
-                : "bg-blue-950/40 border-blue-500/40 text-blue-200"
-            }`}>
-              {feedback.type === "success" ? <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-400" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
-              <span>{feedback.message}</span>
-            </div>
-          )}
-
-          {/* Active Premium Banner */}
-          {status?.is_premium && status.active_subscription && (
-            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-emerald-950/30 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black uppercase tracking-wider text-emerald-400">
-                      Active Subscription
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300">
-                      {status.days_remaining} Days Remaining
-                    </span>
-                  </div>
-                  <h3 className="text-sm sm:text-base font-extrabold text-white">
-                    {status.active_subscription.planName}
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Valid until {new Date(status.active_subscription.expiresAt || "").toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}. You currently have full unrestricted access to all government schemes.
-                  </p>
-                </div>
+          {/* Scheme count pill */}
+          {totalMatchingCount !== undefined && totalMatchingCount > accessibleCount && (
+            <div className="mt-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-amber-200">
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  You have matched <strong>{totalMatchingCount} schemes</strong> based on your profile!
+                  Currently, free citizens can view the first <strong>{accessibleCount} schemes</strong>.
+                </span>
               </div>
-              <span className="text-xs font-bold text-emerald-300 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/30 self-start sm:self-auto">
-                Status: Approved & Active
+              <span className="hidden sm:inline-block px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 font-black text-2xs uppercase tracking-wider">
+                {totalMatchingCount - accessibleCount} Locked
               </span>
             </div>
           )}
+        </div>
 
-          {/* Pending Request Banner */}
-          {status?.pending_request && (
-            <div className="p-4 sm:p-5 rounded-2xl bg-amber-950/40 border border-amber-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
-                  <Clock className="w-5 h-5 animate-pulse" />
+        {/* Modal Body */}
+        <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+          {/* Notifications / Feedback Banner */}
+          {feedback && (
+            <div
+              className={`p-4 rounded-2xl flex items-start gap-3 text-xs leading-relaxed transition ${
+                feedback.type === "success"
+                  ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
+                  : feedback.type === "error"
+                  ? "bg-rose-500/10 border border-rose-500/30 text-rose-300"
+                  : "bg-amber-500/10 border border-amber-500/30 text-amber-200"
+              }`}
+            >
+              {feedback.type === "success" ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              ) : feedback.type === "error" ? (
+                <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              ) : (
+                <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1 whitespace-pre-line">{feedback.message}</div>
+              <button
+                onClick={() => setFeedback(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* ACTIVE SUBSCRIPTION BANNER */}
+          {status?.is_premium && status.active_subscription && (
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-emerald-950/40 border border-emerald-500/40 text-emerald-300 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  <span className="font-extrabold text-white text-sm">
+                    Active Plan: {status.active_subscription.planName}
+                  </span>
                 </div>
+                <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-xs">
+                  Premium Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-300">
+                You have unrestricted access to all matched schemes, official portal links, checklists, and automated eligibility advice.
+              </p>
+              {status.days_remaining !== null && (
+                <div className="flex items-center gap-2 text-2xs text-emerald-400 font-medium pt-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>
+                    Valid until {new Date(status.active_subscription.expiresAt || "").toLocaleDateString()} ({status.days_remaining} days remaining)
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* APPROVED FOR PAYMENT BANNER */}
+          {!status?.is_premium && status?.approved_for_payment && (
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/50 border border-amber-400/80 text-amber-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-black text-amber-300">
+                  <Zap className="w-5 h-5 text-amber-400" />
+                  <span>Request Approved: Ready for Payment</span>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-amber-400/20 text-amber-300 font-extrabold text-xs">
+                  Approved
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Your request for <strong>{status.approved_for_payment.planName} (₹{status.approved_for_payment.amount})</strong> has been approved by the administrator. Proceed to complete payment via Razorpay.
+              </p>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={() => handleOpenConfirm(status.approved_for_payment!.planId as SubscriptionPlanId)}
+                  disabled={submitting || verifying}
+                  className="px-6 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-lg shadow-amber-500/20 transition flex items-center gap-2"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Proceed to Razorpay Payment (₹{status.approved_for_payment.amount})</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* PENDING REQUEST BANNER */}
+          {!status?.is_premium && !status?.approved_for_payment && status?.pending_request && (
+            <div className="p-4 rounded-2xl bg-slate-800/80 border border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5 text-slate-300">
+                <Clock className="w-4 h-4 text-amber-400 shrink-0" />
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black uppercase tracking-wider text-amber-400">
-                      Request Pending Approval
-                    </span>
-                  </div>
-                  <h3 className="text-sm sm:text-base font-extrabold text-white">
-                    {status.pending_request.planName} (₹{status.pending_request.amount})
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Submitted on {new Date(status.pending_request.requestedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}. Awaiting admin approval. Premium access will be enabled once approved.
+                  <span className="font-bold text-white">
+                    Pending Subscription: {status.pending_request.planName}
+                  </span>
+                  <p className="text-2xs text-slate-400">
+                    Direct payment is available. You can complete checkout directly below.
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => handleCancelRequest(status.pending_request!.id)}
                 disabled={cancelling}
-                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-rose-300 border border-rose-500/30 transition shrink-0 self-start sm:self-auto"
+                className="self-start sm:self-auto px-3 py-1.5 rounded-xl text-2xs font-bold text-rose-300 hover:text-white bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition"
               >
                 {cancelling ? "Cancelling..." : "Cancel Request"}
               </button>
             </div>
           )}
 
-          {/* Previous Rejection Banner (if any) */}
-          {!status?.is_premium && !status?.pending_request && status?.latest_request?.status === "rejected" && (
-            <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/30 flex items-start gap-3 text-xs sm:text-sm">
-              <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
-              <div>
-                <p className="font-bold text-rose-200">
-                  Your previous subscription request for {status.latest_request.planName} was rejected.
-                </p>
-                {status.latest_request.rejectionReason && (
-                  <p className="text-rose-300/80 text-xs mt-0.5">
-                    Reason: {status.latest_request.rejectionReason}
-                  </p>
-                )}
-                <p className="text-slate-400 text-xs mt-1">
-                  You remain on the Free plan and can submit a new subscription request below.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Context Notice for Free Users with more matching schemes */}
-          {typeof totalMatchingCount === "number" && totalMatchingCount > accessibleCount && !status?.is_premium && (
-            <div className="p-4 rounded-2xl bg-brand-blue/15 border border-brand-blue/30 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-brand-blue/20 text-brand-blue flex items-center justify-center font-bold text-xs shrink-0">
-                  {totalMatchingCount}
-                </div>
-                <div>
-                  <p className="text-xs sm:text-sm font-extrabold text-white">
-                    You have {totalMatchingCount} matching government schemes!
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    Free accounts are limited to complete details of only the first {accessibleCount} schemes. Upgrade below to view all {totalMatchingCount} schemes.
-                  </p>
-                </div>
-              </div>
-              <span className="hidden sm:inline-block px-3 py-1 rounded-xl text-xs font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                +{totalMatchingCount - accessibleCount} Schemes Locked
-              </span>
-            </div>
-          )}
-
-          {/* Manual Approval Demo Disclaimer */}
-          <div className="p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/50 flex items-center gap-3 text-xs text-slate-300">
-            <Info className="w-4 h-4 text-cyan-400 shrink-0" />
-            <span>
-              <strong>Demo Subscription Workflow:</strong> No real money or credit card/UPI is deducted. Once you click &quot;Subscribe Now&quot;, your request is saved as Pending in PostgreSQL and activated manually by the administrator.
-            </span>
-          </div>
-
-          {/* 3 OTT-STYLE SUBSCRIPTION CARDS */}
+          {/* PRICING PLANS GRID */}
           {loading ? (
-            <div className="py-12 text-center">
-              <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto mb-2" />
-              <p className="text-xs text-slate-400">Loading subscription tiers...</p>
+            <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400">
+              <RefreshCw className="w-8 h-8 animate-spin text-amber-400" />
+              <p className="text-xs font-medium">Loading subscription plans...</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 pt-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {plans.map((plan) => {
                 const isSelected = selectedPlanId === plan.id;
-                const isPendingForThis = status?.pending_request?.planId === plan.id;
-                const isActiveForThis = status?.active_subscription?.planId === plan.id;
+                const isActiveForThis = status?.is_premium && status.active_subscription?.planId === plan.id;
+                const isApprovedForThis = !status?.is_premium && status?.approved_for_payment?.planId === plan.id;
+                const isPendingForThis = !status?.is_premium && status?.pending_request?.planId === plan.id;
 
                 return (
                   <div
                     key={plan.id}
                     onClick={() => setSelectedPlanId(plan.id)}
-                    className={`relative rounded-3xl p-6 transition-all duration-200 cursor-pointer flex flex-col justify-between ${
+                    className={`relative p-5 rounded-3xl border transition flex flex-col justify-between cursor-pointer ${
                       isSelected
-                        ? "bg-gradient-to-b from-slate-800/90 to-slate-900 border-2 border-amber-400 shadow-xl shadow-amber-500/10 scale-[1.02]"
-                        : "bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/60 hover:border-slate-600"
+                        ? "bg-slate-800/90 border-amber-400/80 shadow-lg shadow-amber-500/10"
+                        : "bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-800/40"
                     }`}
                   >
                     {/* Badge */}
-                    {plan.badge && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap z-10">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-md whitespace-nowrap ${
-                          plan.popular 
-                            ? "bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950" 
-                            : "bg-brand-blue text-white"
-                        }`}>
-                          {plan.badge}
-                        </span>
+                    {plan.popular && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-3xs uppercase tracking-wider shadow-md">
+                        {plan.badge || "Most Popular"}
                       </div>
                     )}
 
                     <div className="space-y-4">
-                      {/* Plan Header */}
-                      <div className="border-b border-slate-700/60 pb-4">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-base font-extrabold text-white">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h3 className="font-extrabold text-white text-base">
                             {plan.name}
                           </h3>
-                          {isSelected && (
-                            <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center">
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
-                            </span>
-                          )}
+                          <p className="text-2xs text-slate-400 font-medium">
+                            {plan.duration_label} ({plan.duration_days} days)
+                          </p>
                         </div>
-                        <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                          {plan.description}
-                        </p>
-
-                        <div className="mt-4 flex items-baseline gap-1">
-                          <span className="text-3xl sm:text-4xl font-black text-white">
+                        <div className="text-right">
+                          <span className="text-2xl font-black text-amber-400">
                             ₹{plan.price}
                           </span>
-                          <span className="text-xs font-bold text-slate-400">
-                            / {plan.duration_label}
-                          </span>
+                          <span className="text-3xs text-slate-500 block">INR</span>
                         </div>
-                        <p className="text-[11px] text-amber-300/80 font-medium mt-0.5">
-                          Validity: {plan.duration_days} days
-                        </p>
                       </div>
 
-                      {/* Feature Bullet points */}
-                      <ul className="space-y-2.5 pt-1 text-xs text-slate-300">
-                        {plan.features.map((feat, idx) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                            <span>{feat}</span>
+                      <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800/60 pt-3">
+                        {plan.description}
+                      </p>
+
+                      <ul className="space-y-2 text-2xs text-slate-300">
+                        {plan.features.slice(0, 4).map((f, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <Check className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                            <span>{f}</span>
                           </li>
                         ))}
                       </ul>
                     </div>
 
-                    {/* Action Button */}
                     <div className="pt-6">
                       {isActiveForThis ? (
                         <button
                           disabled
-                          className="w-full py-3 rounded-2xl font-bold text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-default"
+                          className="w-full py-2.5 rounded-2xl font-bold text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-default"
                         >
                           Current Active Plan
-                        </button>
-                      ) : isPendingForThis ? (
-                        <button
-                          disabled
-                          className="w-full py-3 rounded-2xl font-bold text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 cursor-default"
-                        >
-                          Request Pending
                         </button>
                       ) : (
                         <button
@@ -416,13 +611,13 @@ export function SubscriptionModal({
                             e.stopPropagation();
                             handleOpenConfirm(plan.id);
                           }}
-                          className={`w-full py-3 rounded-2xl font-extrabold text-xs transition flex items-center justify-center gap-2 shadow-md ${
+                          className={`w-full py-2.5 rounded-2xl font-black text-xs transition flex items-center justify-center gap-2 shadow-md ${
                             isSelected
                               ? "bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-amber-500/20"
                               : "bg-slate-700 hover:bg-slate-600 text-white"
                           }`}
                         >
-                          <span>Subscribe Now</span>
+                          <span>Subscribe with Razorpay</span>
                           <ArrowRight className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -433,9 +628,9 @@ export function SubscriptionModal({
             </div>
           )}
 
-          {/* CONFIRMATION MODAL OVERLAY */}
+          {/* CONFIRMATION / PROCEED MODAL OVERLAY */}
           {showConfirm && selectedPlan && (
-            <div className="p-6 rounded-3xl bg-slate-800/90 border border-amber-400/60 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="p-6 rounded-3xl bg-slate-800/95 border border-amber-400/80 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-amber-400/20 text-amber-400 flex items-center justify-center font-bold">
@@ -443,7 +638,7 @@ export function SubscriptionModal({
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-white">
-                      Confirm Subscription Request: {selectedPlan.name}
+                      Subscribe: {selectedPlan.name}
                     </h3>
                     <p className="text-xs text-slate-400">
                       Amount: ₹{selectedPlan.price} • Duration: {selectedPlan.duration_days} Days ({selectedPlan.duration_label})
@@ -458,54 +653,110 @@ export function SubscriptionModal({
                 </button>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-700 text-xs space-y-2 text-slate-300">
-                <p className="flex items-center gap-2 text-amber-300 font-bold">
-                  <ShieldCheck className="w-4 h-4 text-amber-400" />
-                  <span>Demo Mode — No Real Payment Processing</span>
-                </p>
-                <p>
-                  Clicking <strong>&quot;Submit Subscription Request&quot;</strong> will record your request with status <code>Pending</code> in PostgreSQL. No credit card, UPI, or actual charge is taken.
-                </p>
-                <p className="text-slate-400 text-[11px]">
-                  An administrator will review and approve your request from the Admin Dashboard, which will activate full access to all matching government schemes.
-                </p>
+              {/* Authenticated Citizen Details */}
+              <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-700/80 text-xs space-y-1.5 text-slate-300">
+                <div className="flex items-center justify-between">
+                  <span className="text-3xs font-extrabold uppercase text-slate-400 tracking-wider">
+                    Authenticated Citizen Details
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold text-3xs">
+                    Verified Account
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-2xs">
+                  <div>
+                    <span className="text-slate-500">Name: </span>
+                    <strong className="text-white">{user?.name || profile?.full_name || "Citizen"}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">User ID: </span>
+                    <strong className="text-amber-400 font-mono">#{user?.id ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Email: </span>
+                    <strong className="text-slate-200">{user?.email || "—"}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Selected Plan: </span>
+                    <strong className="text-amber-300">{selectedPlan.name} (₹{selectedPlan.price})</strong>
+                  </div>
+                </div>
               </div>
 
+              {/* Form Validation Error Banner */}
+              {formError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* Phone Number Input */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-300">
-                  Optional note to administrator:
+                <label className="text-2xs font-bold text-slate-300 block">
+                  Enter your mobile number for Razorpay Checkout <span className="text-rose-400">*</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Requesting yearly plan for farmer/student access"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-3.5 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
-                />
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    placeholder="10-digit mobile number"
+                    value={phoneNumber}
+                    autoFocus
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                      setPhoneNumber(val);
+                      if (val.length === 10) setPhoneError(null);
+                    }}
+                    className="w-full pl-12 pr-3.5 py-2.5 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+                {phoneError ? (
+                  <p className="text-3xs text-rose-400 font-medium">{phoneError}</p>
+                ) : (
+                  <p className="text-3xs text-slate-400">
+                    Your number is used in-memory for the Razorpay gateway session and is never stored in the database.
+                  </p>
+                )}
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-2">
+              {/* Security notice */}
+              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-3xs text-slate-400 flex items-start gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <span>
+                  Official Razorpay TEST MODE Checkout • Instant activation upon verified payment • No admin approval required.
+                </span>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
                 <button
+                  type="button"
                   onClick={() => setShowConfirm(false)}
-                  disabled={submitting}
+                  disabled={submitting || verifying}
                   className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-700/60 transition"
                 >
-                  Back
+                  Cancel
                 </button>
                 <button
-                  onClick={handleSubmitRequest}
-                  disabled={submitting}
-                  className="px-6 py-2.5 rounded-xl text-xs font-extrabold bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-md shadow-amber-500/20 transition flex items-center gap-2"
+                  type="button"
+                  onClick={() => executeRazorpayCheckout(selectedPlan.id)}
+                  disabled={submitting || verifying}
+                  className="px-6 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-md shadow-amber-500/20 transition flex items-center gap-2 disabled:opacity-50"
                 >
-                  {submitting ? (
+                  {submitting || verifying ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Submitting...</span>
+                      <span>{verifying ? "Verifying..." : "Opening Razorpay..."}</span>
                     </>
                   ) : (
                     <>
-                      <Check className="w-4 h-4" />
-                      <span>Submit Subscription Request</span>
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Proceed to Razorpay (₹{selectedPlan.price})</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </>
                   )}
                 </button>
@@ -525,7 +776,7 @@ export function SubscriptionModal({
               <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/60">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-800 bg-slate-800/40 text-[11px] font-black uppercase text-slate-400">
+                    <tr className="border-b border-slate-800 bg-slate-800/40 text-2xs font-black uppercase text-slate-400">
                       <th className="py-3 px-4">Feature</th>
                       <th className="py-3 px-4 text-slate-400">Free Citizen Tier</th>
                       <th className="py-3 px-4 text-amber-300 font-bold bg-amber-500/10">Premium Citizen Pass</th>
@@ -549,8 +800,8 @@ export function SubscriptionModal({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-800/80 bg-slate-950/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400">
           <div className="flex items-center gap-2">
-            <Lock className="w-3.5 h-3.5 text-slate-500" />
-            <span>Administrator manual approval workflow • Zero payment gateway integration</span>
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <span>Secured by Razorpay • UPI AutoPay / Cards / Netbanking • 256-Bit SSL Encryption</span>
           </div>
           <button
             onClick={onClose}

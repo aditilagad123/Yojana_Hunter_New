@@ -14,8 +14,7 @@ import {
   Menu, 
   X,
   ChevronRight,
-  Sparkles,
-  Crown
+  Sparkles
 } from "lucide-react";
 import { 
   isAdminLoggedIn, 
@@ -68,36 +67,32 @@ export default function AdminLayout({
     );
   }
 
+  const normalizedPath = pathname.replace(/\/+$/, "");
+
   const navItems = [
     {
       name: "Dashboard",
       href: "/admin/dashboard",
       icon: LayoutDashboard,
-      active: pathname === "/admin/dashboard",
+      active: normalizedPath === "/admin/dashboard",
     },
     {
       name: "AI Scheme Discovery",
       href: "/admin/discovery",
       icon: Sparkles,
-      active: pathname === "/admin/discovery",
+      active: normalizedPath === "/admin/discovery",
     },
     {
       name: "Manage Schemes",
       href: "/admin/schemes",
       icon: FileText,
-      active: pathname === "/admin/schemes" || pathname.startsWith("/admin/schemes/"),
+      active: normalizedPath === "/admin/schemes" || (normalizedPath.startsWith("/admin/schemes/") && normalizedPath !== "/admin/schemes/new"),
     },
     {
       name: "Add New Scheme",
       href: "/admin/schemes/new",
       icon: PlusCircle,
-      active: pathname === "/admin/schemes/new",
-    },
-    {
-      name: "Subscriptions",
-      href: "/admin/subscriptions",
-      icon: Crown,
-      active: pathname.startsWith("/admin/subscriptions"),
+      active: normalizedPath === "/admin/schemes/new",
     },
   ];
 

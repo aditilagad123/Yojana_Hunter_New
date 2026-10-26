@@ -7,7 +7,7 @@ import {
   getStoredProfilesList, 
   saveStoredProfilesList 
 } from "@/lib/storage";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiFetchDetailed } from "@/lib/api";
 
 export { getActiveProfileId, setActiveProfileId };
 
@@ -30,7 +30,7 @@ export async function fetchProfile(profileId?: number): Promise<UserProfile> {
   try {
     const backendProfile = await apiFetch<UserProfile>(`/profile${queryStr}`);
     if (backendProfile) {
-      saveStoredProfile(backendProfile);
+      saveStoredProfile(backendProfile, backendProfile.userId || (backendProfile as any).user_id);
       return backendProfile;
     }
   } catch (err) {
@@ -46,78 +46,50 @@ export async function createProfile(data: Partial<UserProfile>): Promise<UserPro
     ...data,
   };
 
-  try {
-    const res = await apiFetch<UserProfile>("/profiles", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    if (res) {
-      if (res.id) {
-        setActiveProfileId(res.id);
-      }
-      saveStoredProfile(res);
-      // Refresh stored list
-      fetchProfiles().catch(() => {});
-      return res;
+  const res = await apiFetchDetailed<UserProfile>("/profiles", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  if (res.data && (res.status === 200 || res.status === 201)) {
+    if (res.data.id) {
+      setActiveProfileId(res.data.id);
     }
-  } catch (err) {
-    console.warn("createProfile network error:", err);
+    saveStoredProfile(res.data, res.data.userId || (res.data as any).user_id);
+    fetchProfiles().catch(() => {});
+    return res.data;
   }
 
-  // Fallback local creation
-  const localId = Date.now();
-  const fallback: UserProfile = {
-    id: localId,
-    name: payload.name,
-    relationship: payload.relationship,
-    occupation: payload.occupation || "",
-    age: payload.age || 0,
-    state: payload.state || "",
-    district: payload.district || "",
-    annualIncome: payload.annualIncome || "",
-    education: payload.education || "",
-    category: payload.category || "General",
-    completenessPercent: 70,
-    language: "en",
-    ...payload,
-  };
-  saveStoredProfile(fallback);
-  setActiveProfileId(localId);
-  return fallback;
+  throw new Error(res.error || "Failed to create profile. Please try again.");
 }
 
 export async function updateProfile(data: Partial<UserProfile>, profileId?: number): Promise<UserProfile> {
   const targetId = profileId || data.id || getActiveProfileId();
   const current = getStoredProfile();
-  const updated: UserProfile = { ...current, ...data };
-  if (targetId) updated.id = targetId;
+  const payload: UserProfile = { ...current, ...data };
+  if (targetId) payload.id = targetId;
 
   // Calculate completeness
   const keyFields = [
-    updated.name, updated.age, updated.gender, updated.occupation, updated.annualIncome,
-    updated.state, updated.district, updated.education, updated.category
+    payload.name, payload.age, payload.gender, payload.occupation, payload.annualIncome,
+    payload.state, payload.district, payload.education, payload.category
   ];
   const filled = keyFields.filter(f => f !== undefined && f !== null && String(f).trim() !== "").length;
-  updated.completenessPercent = Math.round((filled / keyFields.length) * 100);
+  payload.completenessPercent = Math.round((filled / keyFields.length) * 100);
 
-  saveStoredProfile(updated);
+  const endpoint = targetId ? `/profiles/${targetId}` : "/profile";
+  const res = await apiFetchDetailed<UserProfile>(endpoint, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 
-  try {
-    const endpoint = targetId ? `/profiles/${targetId}` : "/profile";
-    const res = await apiFetch<UserProfile>(endpoint, {
-      method: "PUT",
-      body: JSON.stringify(updated),
-    });
-    if (res) {
-      saveStoredProfile(res);
-      fetchProfiles().catch(() => {});
-      return res;
-    }
-  } catch (err) {
-    console.warn("updateProfile network error, saved locally:", err);
+  if (res.data && (res.status === 200 || res.status === 201)) {
+    saveStoredProfile(res.data, res.data.userId || (res.data as any).user_id);
+    fetchProfiles().catch(() => {});
+    return res.data;
   }
 
-  return updated;
+  throw new Error(res.error || "Failed to save profile. Please check your inputs and try again.");
 }
 
 export async function deleteProfile(profileId: number): Promise<boolean> {

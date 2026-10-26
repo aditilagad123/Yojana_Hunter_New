@@ -12,12 +12,21 @@ class Config:
     PORT: int = int(os.getenv("PORT", "5000"))
     HOST: str = os.getenv("HOST", "127.0.0.1")
 
+    # Database Configuration via individual components or combined URL
+    DB_HOST: str = os.getenv("DB_HOST", "localhost")
+    DB_PORT: str = os.getenv("DB_PORT", "5432")
+    DB_NAME: str = os.getenv("DB_NAME", "yojana_hunter")
+    DB_USER: str = os.getenv("DB_USER", "postgres")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+
     # PostgreSQL Database URL
     # Supports postgresql+psycopg:// or postgresql+psycopg2://
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/yojana_hunter"
-    )
+    if os.getenv("DATABASE_URL"):
+        DATABASE_URL: str = os.getenv("DATABASE_URL")
+    else:
+        import urllib.parse
+        encoded_pwd = urllib.parse.quote_plus(DB_PASSWORD) if DB_PASSWORD else "postgres"
+        DATABASE_URL: str = f"postgresql+psycopg://{DB_USER}:{encoded_pwd}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "yojana-hunter-secret-key-change-in-production")
     CORS_ORIGINS: list = [
@@ -37,5 +46,16 @@ class Config:
     GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
     DISCOVERY_MAX_REQUESTS: int = int(os.getenv("DISCOVERY_MAX_REQUESTS", "10"))
     DISCOVERY_SCHEDULE_HOURS: int = int(os.getenv("DISCOVERY_SCHEDULE_HOURS", "24"))
+
+    # Razorpay Payment Gateway Configuration (Test Mode)
+    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "").strip()
+    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
+    RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000").strip()
+
+    # Pre-created Razorpay Plan IDs (from Razorpay Dashboard > Subscriptions > Plans)
+    RAZORPAY_PLAN_ID_MONTHLY: str = os.getenv("RAZORPAY_PLAN_ID_MONTHLY", "").strip()
+    RAZORPAY_PLAN_ID_TWO_MONTHS: str = os.getenv("RAZORPAY_PLAN_ID_TWO_MONTHS", "").strip()
+    RAZORPAY_PLAN_ID_YEARLY: str = os.getenv("RAZORPAY_PLAN_ID_YEARLY", "").strip()
 
 config = Config()

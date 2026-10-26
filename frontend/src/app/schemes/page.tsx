@@ -35,7 +35,7 @@ import { FamilyProfileSwitcher } from "@/components/profile/FamilyProfileSwitche
 
 function SchemesContent() {
   const { profile: authProfile } = useAuth();
-  const [activeFilter, setActiveFilter] = useState<EligibilityStatus | "all">("all");
+  const [activeFilter, setActiveFilter] = useState<EligibilityStatus | "all">("eligible");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedState, setSelectedState] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -51,6 +51,8 @@ function SchemesContent() {
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState<boolean>(false);
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [baseProfile, setBaseProfile] = useState<UserProfile | null>(null);
+  const [comparisonOccupation, setComparisonOccupation] = useState<string | null>(null);
 
   const [counts, setCounts] = useState({
     all: 0,
@@ -97,15 +99,26 @@ function SchemesContent() {
     "Bihar",
   ];
 
-  const loadData = async () => {
+  const loadData = async (overrideProfile?: UserProfile | null) => {
     setLoading(true);
     const catParam = selectedCategory === "All Categories" ? "all" : selectedCategory;
     const stateParam = selectedState === "All States" ? "all" : selectedState;
 
-    const [p, meta] = await Promise.all([
-      authProfile ? Promise.resolve(authProfile) : fetchProfile(),
-      getSyncStatus()
-    ]);
+    let p: UserProfile | null = null;
+    let meta: any = null;
+
+    if (overrideProfile !== undefined) {
+      p = overrideProfile;
+      meta = await getSyncStatus();
+    } else {
+      const [fetchedP, fetchedMeta] = await Promise.all([
+        fetchProfile(),
+        getSyncStatus()
+      ]);
+      p = fetchedP;
+      meta = fetchedMeta;
+      setBaseProfile(fetchedP);
+    }
 
     setProfile(p);
     setSyncMeta(meta);
@@ -123,13 +136,17 @@ function SchemesContent() {
     setIsPremium(activeCatalog.isPremium);
     setUserSubscription(activeCatalog.subscription);
 
-    setCounts({
-      all: allCatalog.totalMatchingCount,
-      eligible: allCatalog.schemes.filter((s) => s.eligibilityStatus === "eligible").length,
-      possibly_eligible: allCatalog.schemes.filter((s) => s.eligibilityStatus === "possibly_eligible" || (s as any).legacyEligibilityStatus === "almost").length,
-      not_eligible: allCatalog.schemes.filter((s) => s.eligibilityStatus === "not_eligible" || (s as any).legacyEligibilityStatus === "ineligible").length,
-      applications_closed: allCatalog.schemes.filter((s) => s.eligibilityStatus === "applications_closed").length,
-    });
+    if (allCatalog.counts) {
+      setCounts(allCatalog.counts as any);
+    } else {
+      setCounts({
+        all: allCatalog.totalMatchingCount,
+        eligible: allCatalog.schemes.filter((s) => s.eligibilityStatus === "eligible").length,
+        possibly_eligible: allCatalog.schemes.filter((s) => s.eligibilityStatus === "possibly_eligible" || (s as any).legacyEligibilityStatus === "almost").length,
+        not_eligible: allCatalog.schemes.filter((s) => s.eligibilityStatus === "not_eligible" || (s as any).legacyEligibilityStatus === "ineligible").length,
+        applications_closed: allCatalog.schemes.filter((s) => s.eligibilityStatus === "applications_closed").length,
+      });
+    }
 
     setSchemes(activeCatalog.schemes);
     setLoading(false);
@@ -202,29 +219,58 @@ function SchemesContent() {
   const [customOccInput, setCustomOccInput] = useState("");
   const [showCustomOcc, setShowCustomOcc] = useState(false);
 
-  const handleQuickOccupationSwitch = async (newOcc: string) => {
-    if (!profile) return;
-    const occLower = newOcc.toLowerCase().trim();
-    const isFarmer = occLower.includes("farmer") || occLower.includes("kisan") || occLower.includes("agri");
-    const isStudent = occLower.includes("student");
-    const hasBusiness = occLower.includes("shop") || occLower.includes("business") || occLower.includes("self-employed") || occLower.includes("trader") || occLower.includes("merchant");
+  const handleQuickOccupationSwitch = (newOcc: string) => {
+    const base = baseProfile || profile;
+    if (!base) return;
 
-    await updateProfile({
+    // Toggle off if clicking the already selected comparison occupation
+    if (comparisonOccupation && comparisonOccupation.toLowerCase() === newOcc.toLowerCase()) {
+      handleResetComparison();
+      return;
+    }
+
+    setComparisonOccupation(newOcc);
+
+    const occLower = newOcc.toLowerCase().trim();
+    const isFarmer = occLower.includes("farmer") || occLower.includes("kisan") || occLower.includes("agri") || occLower.includes("cultivat");
+    const isStudent = occLower.includes("student");
+    const hasBusiness = occLower.includes("shop") || occLower.includes("business") || occLower.includes("self-employed") || occLower.includes("trader") || occLower.includes("merchant") || occLower.includes("artisan");
+    const isGovtEmployee = occLower.includes("government") || occLower.includes("govt") || occLower.includes("sarkari");
+
+    // Construct temporary evaluation profile WITHOUT updating PostgreSQL
+    const evalProfile: UserProfile = {
+      ...base,
       occupation: newOcc,
       isFarmer,
       isStudent,
       hasBusiness,
-      landHoldingAcres: isFarmer ? (profile.landHoldingAcres || 2.0) : 0,
-    }, profile.id);
-    await loadData();
+      isGovtEmployee,
+      landHoldingAcres: isFarmer ? (base.landHoldingAcres && base.landHoldingAcres > 0 ? base.landHoldingAcres : 2.0) : 0,
+    };
+
+    setProfile(evalProfile);
+    loadData(evalProfile);
   };
 
-  const handleQuickGenderSwitch = async (newGender: string) => {
-    if (!profile) return;
-    await updateProfile({
+  const handleResetComparison = () => {
+    setComparisonOccupation(null);
+    if (baseProfile) {
+      setProfile(baseProfile);
+      loadData(baseProfile);
+    } else {
+      loadData();
+    }
+  };
+
+  const handleQuickGenderSwitch = (newGender: string) => {
+    const current = profile || baseProfile;
+    if (!current) return;
+    const evalProfile: UserProfile = {
+      ...current,
       gender: newGender,
-    }, profile.id);
-    await loadData();
+    };
+    setProfile(evalProfile);
+    loadData(evalProfile);
   };
 
   const handleResetFilters = () => {
@@ -332,7 +378,7 @@ function SchemesContent() {
         <FamilyProfileSwitcher
           onProfileChanged={(newProf) => {
             setProfile(newProf);
-            loadData();
+            loadData(newProf);
           }}
         />
 
@@ -344,13 +390,19 @@ function SchemesContent() {
                 <UserCheck className="w-5 h-5 text-brand-blue" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-extrabold text-sm sm:text-base text-brand-navy">
                     Active Citizen Profile Evaluation: {profile?.name || "Citizen"}
                   </h3>
                   <span className="px-2 py-0.5 rounded-md text-2xs font-extrabold bg-blue-100 text-brand-blue border border-blue-200">
                     {profile?.relationship || "Self"}
                   </span>
+                  {comparisonOccupation && (
+                    <span className="px-2 py-0.5 rounded-md text-2xs font-extrabold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1 shadow-2xs">
+                      <Sparkles className="w-3 h-3 text-amber-600" />
+                      Comparing: {comparisonOccupation} (Saved Profile Unchanged)
+                    </span>
+                  )}
                 </div>
                 <p className="text-2xs text-slate-500">
                   Seven primary matching fields evaluated for {profile?.name || "this beneficiary"}
@@ -359,18 +411,19 @@ function SchemesContent() {
             </div>
 
             {/* Profile Action Link */}
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 shrink-0">
               <Link
                 href="/profile"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-brand-blue text-white hover:bg-brand-blue-dark transition shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-brand-blue text-white hover:bg-brand-blue-dark transition shadow-xs whitespace-nowrap"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>Edit Profile</span>
               </Link>
               <Link
                 href="/interview"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition whitespace-nowrap"
               >
+                <Sparkles className="w-3.5 h-3.5 text-brand-blue" />
                 <span>AI Chatbot</span>
               </Link>
             </div>
@@ -378,9 +431,11 @@ function SchemesContent() {
 
           {/* Seven Fields Pills Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 pt-1">
-            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col">
-              <span className="text-3xs font-bold uppercase text-slate-400 tracking-wider">Occupation</span>
-              <span className={`text-xs font-black mt-0.5 truncate ${profile?.occupation ? "text-slate-800" : "text-amber-600 font-semibold"}`}>
+            <div className={`p-2.5 rounded-xl border flex flex-col justify-between ${comparisonOccupation ? "bg-amber-50/60 border-amber-300 ring-1 ring-amber-300/40" : "bg-slate-50 border-slate-200"}`}>
+              <span className="text-3xs font-bold uppercase text-slate-400 tracking-wider truncate">
+                Occupation
+              </span>
+              <span className={`text-xs font-black mt-0.5 truncate ${profile?.occupation ? "text-slate-800" : "text-amber-600 font-semibold"}`} title={profile?.occupation || "Not Specified"}>
                 {profile?.occupation || "Not Specified"}
               </span>
             </div>
@@ -460,7 +515,7 @@ function SchemesContent() {
               <Sparkles className="w-3 h-3 text-brand-blue" />
               <span>Compare Occupation:</span>
             </span>
-            {["Student", "Farmer", "Teacher", "Housewife", "Shopkeeper"].map((occ) => {
+            {["Farmer", "Teacher", "Doctor", "Housewife", "Student", "Government Employee", "Private Employee", "Self-Employed"].map((occ) => {
               const isSelected = (profile?.occupation || "").toLowerCase() === occ.toLowerCase();
               return (
                 <button
@@ -485,13 +540,24 @@ function SchemesContent() {
               type="button"
               onClick={() => setShowCustomOcc(!showCustomOcc)}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition border ${
-                showCustomOcc || !["student", "farmer", "teacher", "housewife", "shopkeeper"].includes((profile?.occupation || "").toLowerCase())
+                showCustomOcc || !["farmer", "teacher", "doctor", "housewife", "student", "government employee", "private employee", "self-employed"].includes((profile?.occupation || "").toLowerCase())
                   ? "bg-brand-navy text-white border-brand-navy shadow-xs"
                   : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
               }`}
             >
               <span>+ Custom Other</span>
             </button>
+            {comparisonOccupation && (
+              <button
+                type="button"
+                onClick={handleResetComparison}
+                className="px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 shadow-2xs"
+                title="Restore saved citizen profile occupation"
+              >
+                <RotateCcw className="w-3 h-3 text-amber-700" />
+                <span>Reset to Saved ({baseProfile?.occupation || "Self"})</span>
+              </button>
+            )}
           </div>
 
           {showCustomOcc && (
@@ -500,7 +566,7 @@ function SchemesContent() {
                 type="text"
                 value={customOccInput}
                 onChange={(e) => setCustomOccInput(e.target.value)}
-                placeholder="Enter custom occupation (e.g. Electrician, Doctor, Artist)..."
+                placeholder="Enter custom occupation (e.g. Electrician, Artist, Lawyer)..."
                 className="px-3.5 py-1.5 text-xs rounded-xl border border-brand-border focus:outline-none focus:border-brand-blue flex-1 max-w-sm"
               />
               <button
@@ -525,7 +591,7 @@ function SchemesContent() {
           <div className="p-4 bg-white rounded-2xl border border-brand-border shadow-xs flex flex-col">
             <span className="text-2xs font-bold text-slate-500 uppercase tracking-wider">Total in Database</span>
             <div className="text-2xl font-black text-brand-navy mt-1">
-              {counts.all}
+              {(counts as any).total_in_db ?? counts.all}
             </div>
             <span className="text-3xs text-slate-400 mt-1">Real government schemes</span>
           </div>
@@ -569,6 +635,16 @@ function SchemesContent() {
         {/* 3. FILTER TABS */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
           <button
+            onClick={() => setActiveFilter("eligible")}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition whitespace-nowrap ${
+              activeFilter === "eligible"
+                ? "bg-emerald-600 text-white shadow-sm"
+                : "bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200"
+            }`}
+          >
+            Eligible Schemes ({counts.eligible})
+          </button>
+          <button
             onClick={() => setActiveFilter("all")}
             className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition whitespace-nowrap ${
               activeFilter === "all"
@@ -577,16 +653,6 @@ function SchemesContent() {
             }`}
           >
             All Relevant Schemes ({counts.all})
-          </button>
-          <button
-            onClick={() => setActiveFilter("eligible")}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition whitespace-nowrap ${
-              activeFilter === "eligible"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200"
-            }`}
-          >
-            Eligible ({counts.eligible})
           </button>
           <button
             onClick={() => setActiveFilter("possibly_eligible")}
@@ -676,10 +742,10 @@ function SchemesContent() {
               </div>
               <div className="space-y-1">
                 <h3 className="text-base font-bold text-brand-navy">
-                  No government schemes match your profile {profile?.occupation ? `(${profile.occupation}${profile.state ? `, ${profile.state}` : ''})` : ''}
+                  No matching schemes with verified official links were found for the information provided.
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-                  We only display schemes strictly relevant to your verified profile. Update your profile or adjust your filters to see more recommendations.
+                  Please review your details or try again later. We only display schemes that strictly match verified eligibility criteria and have verified official government portal links.
                 </p>
               </div>
               <div className="flex items-center justify-center gap-3 flex-wrap">

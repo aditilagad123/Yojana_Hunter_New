@@ -1,9 +1,12 @@
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiFetchDetailed, getAuthToken } from "@/lib/api";
 import { 
   SubscriptionPlansResponse, 
   UserSubscriptionStatus, 
   SubscriptionRequestRecord, 
-  AdminSubscriptionListResponse 
+  AdminSubscriptionListResponse,
+  RazorpayCheckoutInitResponse,
+  RazorpayPaymentCallback,
+  RazorpayVerifyResponse
 } from "@/types/subscription";
 import { getAdminToken, clearAdminAuth } from "@/services/adminService";
 
@@ -114,21 +117,34 @@ export async function fetchMySubscriptionStatus(): Promise<UserSubscriptionStatu
   };
 }
 
+export interface SubscriptionRequestPayload {
+  planId: string;
+  phoneNumber?: string;
+  bankName?: string;
+  bankAccountType?: string;
+  paymentMethod?: string;
+  adminNotes?: string;
+}
+
 /**
- * Submit a demo subscription request (awaiting manual admin approval)
+ * Submit a subscription request (awaiting manual admin review & approval)
  */
 export async function submitSubscriptionRequest(
-  planId: string, 
+  payloadOrPlanId: string | SubscriptionRequestPayload, 
   adminNotes?: string
 ): Promise<{ success: boolean; message: string; request?: SubscriptionRequestRecord }> {
   try {
+    const payload = typeof payloadOrPlanId === "string" 
+      ? { planId: payloadOrPlanId, adminNotes }
+      : payloadOrPlanId;
+
     const data = await apiFetch<{ message: string; request: SubscriptionRequestRecord }>("/subscriptions/request", {
       method: "POST",
-      body: JSON.stringify({ planId, adminNotes })
+      body: JSON.stringify(payload)
     });
     return {
       success: true,
-      message: data.message || "Your subscription request has been submitted and is awaiting admin approval.",
+      message: data.message || "Your subscription request has been submitted. Please wait for admin review.",
       request: data.request
     };
   } catch (err: any) {
@@ -158,6 +174,223 @@ export async function cancelSubscriptionRequest(
     return {
       success: false,
       message: err.message || "Failed to cancel subscription request."
+    };
+  }
+}
+
+/**
+ * Dynamically loads the official Razorpay Checkout SDK script
+ */
+export function loadRazorpayCheckoutScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") {
+      resolve(false);
+      return;
+    }
+    if ((window as any).Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      console.error("Failed to load Razorpay Checkout SDK");
+      resolve(false);
+    };
+    document.body.appendChild(script);
+  });
+}
+
+export interface RazorpayCheckoutInitResult {
+  success: boolean;
+  data?: RazorpayCheckoutInitResponse;
+  message: string;
+  requires_admin_approval?: boolean;
+  diagnostic?: {
+    operation?: string;
+    status_code?: number;
+    error_code?: string;
+    description?: string;
+    action_required?: string;
+  };
+}
+
+/**
+ * Initiates Razorpay Subscription Checkout session from Flask backend
+ * Validates server-side pricing, records non-sensitive bank choices, and accepts temporary phone for gateway prefill ONLY.
+ */
+export async function initiateSubscriptionCheckout(
+  planId: string,
+  phoneNumber?: string,
+  bankName?: string,
+  bankAccountType?: string,
+  paymentMethod?: string
+): Promise<RazorpayCheckoutInitResult> {
+  const res = await apiFetchDetailed<any>("/subscriptions/checkout", {
+    method: "POST",
+    body: JSON.stringify({ 
+      planId, 
+      phone_number: phoneNumber?.trim() || undefined,
+      bank_name: bankName || undefined,
+      bank_account_type: bankAccountType || undefined,
+      payment_method: paymentMethod || undefined
+    })
+  });
+
+  if (res.data && (res.data.order_id || res.data.subscription_id) && res.data.key_id) {
+    return {
+      success: true,
+      data: res.data as RazorpayCheckoutInitResponse,
+      message: res.data.message || "Checkout session initialized."
+    };
+  }
+
+  const requiresApproval = Boolean(
+    res.data?.requires_admin_approval || 
+    res.data?.details?.requires_admin_approval ||
+    res.status === 403
+  );
+
+  const diagnostic = res.data?.diagnostic || res.data?.details?.diagnostic;
+
+  return {
+    success: false,
+    message: res.error || res.data?.message || "Failed to initialize payment session. Please verify server connection.",
+    requires_admin_approval: requiresApproval,
+    diagnostic
+  };
+}
+
+/**
+ * Verifies Razorpay payment signature in the backend.
+ * Sets verification status to verified and marks admin review as pending.
+ * Does NOT activate subscription until admin approval.
+ */
+export async function verifySubscriptionPayment(
+  callbackData: RazorpayPaymentCallback
+): Promise<RazorpayVerifyResponse> {
+  const res = await apiFetchDetailed<RazorpayVerifyResponse>("/subscriptions/verify", {
+    method: "POST",
+    body: JSON.stringify({
+      razorpay_payment_id: callbackData.razorpay_payment_id,
+      razorpay_order_id: callbackData.razorpay_order_id,
+      razorpay_subscription_id: callbackData.razorpay_subscription_id,
+      razorpay_signature: callbackData.razorpay_signature
+    })
+  });
+
+  if (res.data && res.data.success) {
+    return res.data;
+  }
+
+  return {
+    success: false,
+    message: res.error || res.data?.message || "Payment signature verification failed.",
+    is_premium: false,
+    awaiting_admin_approval: false
+  };
+}
+
+/**
+ * Subscribes to real-time subscription lifecycle events using Server-Sent Events (SSE).
+ * Falls back gracefully to periodic polling if EventSource is unavailable or disconnects.
+ */
+export function subscribeToSubscriptionUpdates(
+  onEvent: (event: { type: string; userId?: number; data?: any }) => void
+): () => void {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const token = getAuthToken() || "";
+  let eventSource: EventSource | null = null;
+  let pollInterval: any = null;
+
+  try {
+    const sseUrl = `${API_BASE_URL}/subscriptions/stream-status${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+    eventSource = new EventSource(sseUrl);
+
+    eventSource.onmessage = (e) => {
+      try {
+        if (!e.data || e.data.startsWith(":")) return;
+        const parsed = JSON.parse(e.data);
+        onEvent(parsed);
+      } catch (err) {
+        console.debug("SSE parse warning:", err);
+      }
+    };
+
+    eventSource.onerror = () => {
+      // Graceful fallback to polling if SSE connection drops
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      if (!pollInterval) {
+        pollInterval = setInterval(async () => {
+          try {
+            const status = await fetchMySubscriptionStatus();
+            onEvent({ type: "poll_sync", data: status });
+          } catch (e) {
+            // ignore network glitch
+          }
+        }, 3000);
+      }
+    };
+  } catch (err) {
+    console.debug("EventSource error, starting fallback poll:", err);
+    pollInterval = setInterval(async () => {
+      try {
+        const status = await fetchMySubscriptionStatus();
+        onEvent({ type: "poll_sync", data: status });
+      } catch (e) {
+        // ignore
+      }
+    }, 3000);
+  }
+
+  return () => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  };
+}
+
+/**
+ * Records an isolated payment failure, bank decline, or e-mandate error for current citizen
+ */
+export async function reportPaymentFailure(details: {
+  subscription_id?: string;
+  payment_id?: string;
+  error_code?: string;
+  error_description?: string;
+  error_source?: string;
+  error_step?: string;
+  error_reason?: string;
+  bank?: string;
+  payment_method?: string;
+}): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  try {
+    const res = await apiFetchDetailed<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }>("/subscriptions/report-failure", {
+      method: "POST",
+      body: JSON.stringify(details)
+    });
+    return {
+      success: true,
+      message: res.data?.message || "Payment failure recorded safely.",
+      subscription: res.data?.subscription
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || "Failed to record payment failure."
     };
   }
 }
@@ -219,14 +452,19 @@ export async function fetchAdminSubscriptions(
 }
 
 /**
- * Approve a subscription request (Admin only)
+ * Approve a subscription request for payment initiation (Admin only)
+ * Authorizes payment workflow to proceed; does NOT mark payment successful directly.
  */
 export async function approveSubscription(
-  requestId: number
+  requestId: number,
+  adminNotes?: string
 ): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
   const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
     `/admin/subscriptions/${requestId}/approve`,
-    { method: "POST" }
+    { 
+      method: "POST",
+      body: JSON.stringify({ admin_notes: adminNotes })
+    }
   );
 
   if (res.data) {
@@ -256,7 +494,157 @@ export async function rejectSubscription(
   return { success: false, message: res.error || "Failed to reject subscription" };
 }
 
+/**
+ * Mark a payment request failed (Admin only)
+ */
+export async function markPaymentFailed(
+  requestId: number,
+  reason?: string,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/mark-failed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ failure_reason: reason, admin_notes: adminNotes })
+    }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to mark payment as failed" };
+}
+
+/**
+ * Mark a payment request under administrative review (Admin only)
+ */
+export async function markUnderReview(
+  requestId: number,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/mark-review`,
+    {
+      method: "POST",
+      body: JSON.stringify({ admin_notes: adminNotes })
+    }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to mark request for review" };
+}
+
+/**
+ * Verify actual gateway transaction status with Razorpay (Admin only)
+ */
+export async function verifyGatewayStatus(
+  requestId: number
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/verify-gateway`,
+    { method: "POST" }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to verify gateway status" };
+}
+
+/**
+ * Admin Option A: Record Payment Successful & Activate Subscription
+ */
+export async function recordAdminOutcomeSuccess(
+  requestId: number,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/outcome/success`,
+    {
+      method: "POST",
+      body: JSON.stringify({ admin_notes: adminNotes })
+    }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to record payment success" };
+}
+
+/**
+ * Admin Option B: Record Payment Successful but e-Mandate Failed
+ * Keeps subscription inactive pending mandate resolution.
+ */
+export async function recordAdminOutcomeMandateFailed(
+  requestId: number,
+  failureReason?: string,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/outcome/mandate-failed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ failure_reason: failureReason, admin_notes: adminNotes })
+    }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to record mandate failure" };
+}
+
+/**
+ * Admin Option C: Record Payment Failed
+ * Records failure reason without false activation.
+ */
+export async function recordAdminOutcomeFailed(
+  requestId: number,
+  failureReason?: string,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/outcome/failed`,
+    {
+      method: "POST",
+      body: JSON.stringify({ failure_reason: failureReason, admin_notes: adminNotes })
+    }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to record payment failure" };
+}
+
+/**
+ * Admin Action: Authorize Citizen to Retry Payment or e-Mandate
+ * Sets status to REQUIRES_RETRY without double charging.
+ */
+export async function authorizeRetryMandate(
+  requestId: number,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; subscription?: SubscriptionRequestRecord }> {
+  const res = await adminApiCall<{ message: string; subscription: SubscriptionRequestRecord }>(
+    `/admin/subscriptions/${requestId}/retry-mandate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ admin_notes: adminNotes })
+    }
+  );
+
+  if (res.data) {
+    return { success: true, message: res.data.message, subscription: res.data.subscription };
+  }
+  return { success: false, message: res.error || "Failed to authorize retry" };
+}
+
 // Convenient aliases
 export const fetchAdminSubscriptionRequests = fetchAdminSubscriptions;
 export const approveSubscriptionRequest = approveSubscription;
 export const rejectSubscriptionRequest = rejectSubscription;
+

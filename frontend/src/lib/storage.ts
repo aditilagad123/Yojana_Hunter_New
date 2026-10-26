@@ -101,15 +101,23 @@ export const saveStoredProfile = (profile: UserProfile, userId?: number | string
 export const clearStoredProfile = (userId?: number | string): void => {
   if (typeof window === "undefined") return;
   try {
+    const activeId = userId !== undefined ? userId : getActiveUserId();
     localStorage.removeItem(KEYS.PROFILE);
-    if (userId) {
-      localStorage.removeItem(`${KEYS.PROFILE}_${userId}`);
-    } else {
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(KEYS.PROFILE)) {
-          localStorage.removeItem(key);
-        }
+    localStorage.removeItem(KEYS.PROFILES_LIST);
+    localStorage.removeItem(KEYS.ACTIVE_PROFILE_ID);
+    if (activeId) {
+      localStorage.removeItem(`${KEYS.PROFILE}_${activeId}`);
+      localStorage.removeItem(`${KEYS.PROFILES_LIST}_${activeId}`);
+      localStorage.removeItem(`${KEYS.ACTIVE_PROFILE_ID}_${activeId}`);
+    }
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && (
+        key.startsWith(KEYS.PROFILE) ||
+        key.startsWith(KEYS.PROFILES_LIST) ||
+        key.startsWith(KEYS.ACTIVE_PROFILE_ID)
+      )) {
+        localStorage.removeItem(key);
       }
     }
   } catch (err) {
@@ -117,22 +125,29 @@ export const clearStoredProfile = (userId?: number | string): void => {
   }
 };
 
-export const getActiveProfileId = (): number | null => {
+export const getActiveProfileId = (userId?: number | string): number | null => {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(KEYS.ACTIVE_PROFILE_ID);
+    const activeId = userId !== undefined ? userId : getActiveUserId();
+    const key = activeId ? `${KEYS.ACTIVE_PROFILE_ID}_${activeId}` : KEYS.ACTIVE_PROFILE_ID;
+    const raw = localStorage.getItem(key);
     return raw ? parseInt(raw, 10) : null;
   } catch {
     return null;
   }
 };
 
-export const setActiveProfileId = (id: number | null): void => {
+export const setActiveProfileId = (id: number | null, userId?: number | string): void => {
   if (typeof window === "undefined") return;
   try {
+    const activeId = userId !== undefined ? userId : getActiveUserId();
+    const key = activeId ? `${KEYS.ACTIVE_PROFILE_ID}_${activeId}` : KEYS.ACTIVE_PROFILE_ID;
     if (id !== null && id !== undefined) {
-      localStorage.setItem(KEYS.ACTIVE_PROFILE_ID, String(id));
+      localStorage.setItem(key, String(id));
     } else {
+      localStorage.removeItem(key);
+    }
+    if (activeId) {
       localStorage.removeItem(KEYS.ACTIVE_PROFILE_ID);
     }
   } catch (err) {
@@ -140,10 +155,12 @@ export const setActiveProfileId = (id: number | null): void => {
   }
 };
 
-export const getStoredProfilesList = (): UserProfile[] => {
+export const getStoredProfilesList = (userId?: number | string): UserProfile[] => {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(KEYS.PROFILES_LIST);
+    const activeId = userId !== undefined ? userId : getActiveUserId();
+    const key = activeId ? `${KEYS.PROFILES_LIST}_${activeId}` : KEYS.PROFILES_LIST;
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
@@ -154,10 +171,15 @@ export const getStoredProfilesList = (): UserProfile[] => {
   return [];
 };
 
-export const saveStoredProfilesList = (profiles: UserProfile[]): void => {
+export const saveStoredProfilesList = (profiles: UserProfile[], userId?: number | string): void => {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(KEYS.PROFILES_LIST, JSON.stringify(profiles));
+    const activeId = userId !== undefined ? userId : getActiveUserId();
+    const key = activeId ? `${KEYS.PROFILES_LIST}_${activeId}` : KEYS.PROFILES_LIST;
+    localStorage.setItem(key, JSON.stringify(profiles));
+    if (activeId) {
+      localStorage.removeItem(KEYS.PROFILES_LIST);
+    }
   } catch (err) {
     console.error("Failed to save profiles list", err);
   }
@@ -166,16 +188,22 @@ export const saveStoredProfilesList = (profiles: UserProfile[]): void => {
 export const clearAllUserData = (): void => {
   if (typeof window === "undefined") return;
   try {
-    for (let i = localStorage.length - 1; i >= 0; i--) {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && (
-        key.startsWith(KEYS.PROFILE) ||
-        key.startsWith(KEYS.DOCUMENTS) ||
-        key.startsWith(KEYS.DRAFT)
+        key.startsWith("yojana_user_profile") ||
+        key.startsWith("yojana_user_profiles_list") ||
+        key.startsWith("yojana_active_profile_id") ||
+        key.startsWith("yojana_user_documents") ||
+        key.startsWith("yojana_user_draft") ||
+        key === "yojana_auth_user" ||
+        key === "yojana_auth_token"
       )) {
-        localStorage.removeItem(key);
+        keysToRemove.push(key);
       }
     }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
   } catch (err) {
     console.error("Failed to clear all user data", err);
   }

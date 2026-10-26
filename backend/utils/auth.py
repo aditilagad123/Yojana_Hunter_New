@@ -180,6 +180,11 @@ def extract_token_from_request() -> str | None:
     if cookie_token:
         return cookie_token
 
+    # Query param fallback for EventSource / SSE connections
+    query_token = request.args.get("token")
+    if query_token:
+        return query_token
+
     return None
 
 def token_required(f):

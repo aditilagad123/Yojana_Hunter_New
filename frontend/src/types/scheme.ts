@@ -53,6 +53,9 @@ export interface Scheme {
   ineligibleReason?: string;
   officialUrl: string;
   applicationUrl?: string;
+  alternativeUrl?: string;
+  portalStatus?: 'reachable' | 'temporarily_unavailable' | 'redirected' | 'unverified';
+  portalStatusMessage?: string;
   sourceUrl?: string;
   sourceVerificationStatus?: string;
   lastFetchedAt?: string;

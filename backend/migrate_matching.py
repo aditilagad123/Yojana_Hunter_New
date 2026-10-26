@@ -159,10 +159,10 @@ def backfill_scheme_target_audience():
 
             # 10. Integration test welfare schemes
             elif "integration-test" in slug:
-                s.is_student_only = True
-                s.target_occupations = ["Student"]
-                s.target_beneficiary_groups = ["Students"]
-                s.eligible_states = ["All India"]
+                s.is_test = True
+                s.is_active = False
+                s.status = "draft"
+                s.admin_review_status = "pending_review"
 
             # 11. Farmer-specific schemes
             elif s.is_farmer_only or s.occupation == "Farmer" or s.category == "Agriculture":

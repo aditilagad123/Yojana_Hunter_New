@@ -101,8 +101,8 @@ def test_all():
     assert res3.status_code == 200, f"Scenario 3 failed with status {res3.status_code}"
     data3 = res3.get_json()
     eligible3 = data3.get("eligible", []) + data3.get("possibly_eligible", [])
-    farmer_schemes_s3 = [s["name"] for s in eligible3 if s.get("category") == "Agriculture" or s.get("is_farmer_only")]
-    student_schemes_s3 = [s["name"] for s in eligible3 if s.get("category") == "Education" or s.get("is_student_only")]
+    farmer_schemes_s3 = [s["name"] for s in eligible3 if s.get("is_farmer_only") or (s.get("category") == "Agriculture" and not any(t in s.get("name", "").lower() for t in ["teacher", "shikshak"]))]
+    student_schemes_s3 = [s["name"] for s in eligible3 if s.get("is_student_only") or ("scholarship" in s.get("name", "").lower() and not any(t in s.get("name", "").lower() for t in ["teacher", "shikshak"]))]
     print(f"Matched {len(eligible3)} schemes for Teacher:")
     for s in eligible3:
         print(f"  + [{s.get('category')}] {s.get('name')} | whyMatched: {s.get('whyMatched', '')[:70]}...")

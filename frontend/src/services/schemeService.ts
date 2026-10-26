@@ -4,6 +4,20 @@ import { UserProfile } from "@/types/profile";
 import { getStoredProfile } from "@/lib/storage";
 import { apiFetch, apiFetchDetailed } from "@/lib/api";
 
+export function deduplicateSchemes(schemes: Scheme[]): Scheme[] {
+  const seen = new Set<string>();
+  const out: Scheme[] = [];
+  for (const s of schemes) {
+    const key = (s.id || (s as any).slug || (s as any).numericId || s.name || "").toString().toLowerCase().trim();
+    const norm = (s.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!key || seen.has(key) || (norm && seen.has(norm))) continue;
+    seen.add(key);
+    if (norm) seen.add(norm);
+    out.push(s);
+  }
+  return out;
+}
+
 export function isSchemeEligibleForGender(
   schemeGender?: string, 
   schemeName?: string, 
@@ -55,6 +69,8 @@ export async function getSchemes(
 
     const active = profileOverride !== undefined ? profileOverride : getStoredProfile();
     if (active) {
+      if (active.id) params.set("profile_id", String(active.id));
+      if (active.relationship) params.set("relationship", active.relationship);
       if (active.occupation) params.set("profile_occupation", active.occupation);
       if (active.state) params.set("profile_state", active.state);
       if (active.age !== undefined && active.age !== null) params.set("profile_age", String(active.age));
@@ -80,7 +96,7 @@ export async function getSchemes(
         isFarmer = true;
         isStudent = false;
       } else if (occLower) {
-        // Custom occupation (e.g. Teacher, Housewife, Shopkeeper, etc.)
+        // Custom occupation (e.g. Clerk, Teacher, Housewife, Shopkeeper, etc.)
         isStudent = false;
         const land = Number(active.landHoldingAcres || (active as any).land_holding_acres || 0);
         if (land <= 0) {
@@ -98,9 +114,14 @@ export async function getSchemes(
       if (active.isDisabled !== undefined || (active as any).is_disabled !== undefined) {
         params.set("profile_is_disabled", String(Boolean(active.isDisabled ?? (active as any).is_disabled)));
       }
+      const isGovt = occLower.includes("government") || occLower.includes("govt") || occLower.includes("sarkari") || Boolean(active.isGovtEmployee ?? (active as any).is_govt_employee);
+      if (isGovt) {
+        params.set("profile_is_govt_employee", "true");
+      }
       const emp = active.employmentStatus || (active as any).employment_status;
       if (emp) params.set("profile_employment_status", String(emp));
     }
+
 
     const queryStr = params.toString() ? `?${params.toString()}` : "";
     const backendData = await apiFetch<any>(`/schemes${queryStr}`);
@@ -136,7 +157,7 @@ export async function getSchemes(
       );
     }
 
-    return result;
+    return deduplicateSchemes(result);
   } catch {
     const active = profileOverride !== undefined ? profileOverride : getStoredProfile();
     let fallback = active?.occupation ? [] : demoSchemes;
@@ -169,6 +190,14 @@ export interface SchemesCatalogResult {
   freeLimit: number;
   hasMore: boolean;
   subscription?: any;
+  counts?: {
+    total_in_db: number;
+    all: number;
+    eligible: number;
+    possibly_eligible: number;
+    not_eligible: number;
+    applications_closed: number;
+  };
 }
 
 export async function getSchemesCatalog(
@@ -180,13 +209,23 @@ export async function getSchemesCatalog(
 ): Promise<SchemesCatalogResult> {
   try {
     const params = new URLSearchParams();
-    if (filter && filter !== "all") params.set("filter", filter);
+    if (filter && filter !== "all") {
+      params.set("filter", filter);
+      if (filter === "not_eligible" || filter === "applications_closed") {
+        params.set("include_ineligible", "true");
+      }
+    }
     if (query && query.trim() !== "") params.set("q", query.trim());
     if (category && category !== "all") params.set("category", category);
     if (state && state !== "all") params.set("state", state);
 
     const active = profileOverride !== undefined ? profileOverride : getStoredProfile();
     if (active) {
+      if (active.id) params.set("profile_id", String(active.id));
+      const validRelationships = ["self", "father", "mother", "spouse", "child", "son", "daughter", "brother", "sister", "grandfather", "grandmother", "other"];
+      if (active.relationship && validRelationships.includes(active.relationship.toLowerCase())) {
+        params.set("relationship", active.relationship);
+      }
       if (active.occupation) params.set("profile_occupation", active.occupation);
       if (active.state) params.set("profile_state", active.state);
       if (active.age !== undefined && active.age !== null) params.set("profile_age", String(active.age));
@@ -224,6 +263,10 @@ export async function getSchemesCatalog(
 
       if (active.isDisabled !== undefined || (active as any).is_disabled !== undefined) {
         params.set("profile_is_disabled", String(Boolean(active.isDisabled ?? (active as any).is_disabled)));
+      }
+      const isGovt = occLower.includes("government") || occLower.includes("govt") || occLower.includes("sarkari") || Boolean(active.isGovtEmployee ?? (active as any).is_govt_employee);
+      if (isGovt) {
+        params.set("profile_is_govt_employee", "true");
       }
       const emp = active.employmentStatus || (active as any).employment_status;
       if (emp) params.set("profile_employment_status", String(emp));
@@ -276,14 +319,16 @@ export async function getSchemesCatalog(
       );
     }
 
+    const dedupedSchemes = deduplicateSchemes(filtered);
     return {
-      schemes: filtered,
-      totalMatchingCount: Math.max(totalMatchingCount, filtered.length),
-      accessibleCount: filtered.length,
+      schemes: dedupedSchemes,
+      totalMatchingCount: Math.max(totalMatchingCount, dedupedSchemes.length),
+      accessibleCount: dedupedSchemes.length,
       isPremium,
       freeLimit,
-      hasMore: !isPremium && totalMatchingCount > filtered.length,
-      subscription
+      hasMore: !isPremium && totalMatchingCount > dedupedSchemes.length,
+      subscription,
+      counts: backendData?.counts
     };
   } catch {
     const list = await getSchemes(filter, query, category, state, profileOverride);
@@ -637,6 +682,35 @@ export async function getSchemeStates(): Promise<string[]> {
     return res?.states || [];
   } catch {
     return [];
+  }
+}
+
+export async function checkPortalStatus(schemeId: string, refresh: boolean = false): Promise<{
+  schemeId: string;
+  officialUrl?: string;
+  alternativeUrl?: string;
+  status: 'reachable' | 'temporarily_unavailable' | 'redirected' | 'unverified';
+  isAvailable: boolean;
+  statusCode?: number | null;
+  statusMessage?: string;
+  checkedAt?: string;
+}> {
+  try {
+    const q = refresh ? "?refresh=true" : "";
+    const res = await apiFetch<any>(`/schemes/${encodeURIComponent(schemeId)}/portal-status${q}`);
+    return res || {
+      schemeId,
+      status: "temporarily_unavailable",
+      isAvailable: false,
+      statusMessage: "The official portal could not be reached. It may be temporarily unavailable. You can review the scheme details and try again later."
+    };
+  } catch (err: any) {
+    return {
+      schemeId,
+      status: "temporarily_unavailable",
+      isAvailable: false,
+      statusMessage: "The official portal could not be reached. It may be temporarily unavailable. You can review the scheme details and try again later."
+    };
   }
 }
 

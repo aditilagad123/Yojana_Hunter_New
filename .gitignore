@@ -20,6 +20,12 @@ venv.bak/
 # Database & Migrations
 *.sqlite
 *.db
+*.dump
+*.sql
+backups/
+backend/backups/
+scratch/
+backend/scratch/
 
 # Node & Next.js
 node_modules/

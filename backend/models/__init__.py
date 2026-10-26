@@ -275,6 +275,7 @@ class Scheme(Base):
     application_status = Column(String(50), default="open", index=True)  # open, closing_soon, closed, upcoming
     application_url = Column(String(500), nullable=True)
     source_url = Column(String(500), nullable=True)
+    alternative_url = Column(String(500), nullable=True)
     application_process = Column(Text, nullable=True)
     age_min = Column(Integer, nullable=True)
     age_max = Column(Integer, nullable=True)
@@ -300,8 +301,9 @@ class Scheme(Base):
     verification_notes = Column(Text, nullable=True)
     grounding_metadata = Column(JSON, nullable=True)
     discovery_job_id = Column(Integer, ForeignKey("discovery_jobs.id"), nullable=True)
-    admin_review_status = Column(String(50), default="published", index=True)  # pending_review, approved, rejected, needs_verification
+    admin_review_status = Column(String(50), default="pending_review", index=True)  # pending_review, approved, rejected, needs_verification
     rejection_reason = Column(Text, nullable=True)
+    is_test = Column(Boolean, default=False, index=True)
     created_by_admin_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     updated_by_admin_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -317,6 +319,28 @@ class Scheme(Base):
     review_history = relationship("SchemeReviewHistory", back_populates="scheme", cascade="all, delete-orphan", order_by="SchemeReviewHistory.timestamp.desc()")
 
     def to_dict(self, include_rules: bool = True):
+        # Resolve URLs with safety checks
+        from services.portal_health_service import PortalHealthService
+
+        raw_official = (self.official_source_url or "").strip()
+        official_url = raw_official if raw_official and PortalHealthService.is_official_government_url(raw_official) else None
+
+        raw_app = (self.application_url or "").strip()
+        if raw_app and PortalHealthService.is_official_government_url(raw_app):
+            application_url = raw_app
+        else:
+            application_url = official_url
+
+        if not official_url and application_url:
+            official_url = application_url
+
+
+        alt_url = getattr(self, "alternative_url", None)
+        if not alt_url and raw_official:
+            alt_url = PortalHealthService.get_alternative_url(raw_official)
+
+        portal_info = PortalHealthService.get_cached_status(raw_official)
+
         data = {
             "id": self.slug,
             "numericId": self.id,
@@ -331,8 +355,11 @@ class Scheme(Base):
             "eligibleStates": self.eligible_states or ([self.state] if self.state else ["All India"]),
             "benefit": self.benefits,
             "benefits": self.benefits,
-            "officialUrl": self.official_source_url,
-            "applicationUrl": self.application_url or self.official_source_url,
+            "officialUrl": official_url,
+            "applicationUrl": application_url,
+            "alternativeUrl": alt_url,
+            "portalStatus": portal_info.get("status", "reachable"),
+            "portalStatusMessage": portal_info.get("status_message"),
             "sourceUrl": self.source_url or self.official_source_url,
             "sourceVerificationStatus": self.source_verification_status or "verified_live",
             "lastFetchedAt": self.last_fetched_at.isoformat() if self.last_fetched_at else None,
@@ -360,8 +387,10 @@ class Scheme(Base):
             "verificationNotes": self.verification_notes or "",
             "groundingMetadata": self.grounding_metadata or {},
             "discoveryJobId": self.discovery_job_id,
-            "adminReviewStatus": self.admin_review_status or "published",
+            "adminReviewStatus": self.admin_review_status or "pending_review",
             "rejectionReason": self.rejection_reason,
+            "isTest": bool(self.is_test),
+            "is_test": bool(self.is_test),
             "citations": [c.to_dict() for c in self.citations] if self.citations else [],
             "createdByAdminId": self.created_by_admin_id,
             "updatedByAdminId": self.updated_by_admin_id,
@@ -590,6 +619,7 @@ class SubscriptionRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user_name = Column(String(255), nullable=True)
     plan_id = Column(String(50), nullable=False)          # monthly, two_months, yearly
     plan_name = Column(String(100), nullable=False)        # Monthly Access, 2 Months Standard, Yearly Premium Pass
     amount = Column(Float, nullable=False)                # 50.0, 100.0, 500.0
@@ -605,21 +635,72 @@ class SubscriptionRequest(Base):
     expires_at = Column(DateTime, nullable=True, index=True)
     is_active = Column(Boolean, default=False, index=True)
 
+    # Razorpay Payment Gateway & Admin Approval integration fields
+    admin_approval_status = Column(String(50), default="pending", index=True) # pending, approved, rejected
+    mandate_status = Column(String(50), default="MANDATE_PENDING", index=True) # MANDATE_PENDING, MANDATE_ACTIVE, MANDATE_FAILED
+    payment_method = Column(String(50), nullable=True) # netbanking, card, upi, emandate
+    bank_name = Column(String(100), nullable=True) # e.g. HDFC Bank
+    bank_account_type = Column(String(50), nullable=True) # e.g. Savings Account
+    failure_reason = Column(Text, nullable=True)
+    phone_number = Column(String(20), nullable=True)
+    payment_verified_at = Column(DateTime, nullable=True)
+    activated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    razorpay_order_id = Column(String(100), nullable=True, index=True)
+    razorpay_subscription_id = Column(String(100), nullable=True, index=True)
+    razorpay_plan_id = Column(String(100), nullable=True, index=True)
+    razorpay_payment_id = Column(String(100), nullable=True, index=True)
+    razorpay_signature = Column(String(255), nullable=True)
+    amount_in_paise = Column(Integer, nullable=True)
+    payment_verification_status = Column(String(50), default="pending", index=True) # pending, verified, failed
+    payment_status = Column(String(50), default="PAYMENT_PENDING", index=True)  # PAYMENT_PENDING, PAYMENT_SUCCESS, PAYMENT_FAILED, refunded
+    admin_decision = Column(String(50), nullable=True)
+    billing_interval = Column(String(50), nullable=True)               # monthly, two_months, yearly
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
     user = relationship("User", back_populates="subscription_requests", foreign_keys=[user_id])
     reviewed_by = relationship("User", foreign_keys=[reviewed_by_admin_id])
+    audit_logs = relationship("PaymentAuditLog", back_populates="subscription_request", cascade="all, delete-orphan", order_by="PaymentAuditLog.timestamp.desc()")
 
     def to_dict(self, include_user=True):
         now = datetime.datetime.utcnow()
-        is_currently_active = bool(self.status == "approved" and self.is_active and self.expires_at and self.expires_at > now)
+        is_currently_active = bool(
+            (self.status in ("approved", "Approved", "active", "Active")) 
+            and self.is_active 
+            and self.expires_at 
+            and self.expires_at > now
+        )
         data = {
             "id": self.id,
             "userId": self.user_id,
             "planId": self.plan_id,
             "planName": self.plan_name,
             "amount": self.amount,
+            "amountInPaise": self.amount_in_paise or int(self.amount * 100),
             "currency": self.currency,
             "durationDays": self.duration_days,
-            "status": self.status,
+            "status": self.status.capitalize() if self.status else "Pending",
+            "adminApprovalStatus": self.admin_approval_status or "pending",
+            "mandateStatus": self.mandate_status or "MANDATE_PENDING",
+            "paymentMethod": self.payment_method,
+            "bankName": self.bank_name,
+            "bankAccountType": self.bank_account_type,
+            "failureReason": self.failure_reason,
+            "phoneNumber": self.phone_number,
+            "paymentVerificationStatus": self.payment_verification_status or "pending",
+            "paymentStatus": self.payment_status or "PAYMENT_PENDING",
+            "paymentVerifiedAt": self.payment_verified_at.isoformat() if self.payment_verified_at else None,
+            "activatedAt": self.activated_at.isoformat() if self.activated_at else None,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+            "razorpayOrderId": self.razorpay_order_id,
+            "razorpaySubscriptionId": self.razorpay_subscription_id,
+            "razorpayPlanId": self.razorpay_plan_id,
+            "razorpayPaymentId": self.razorpay_payment_id,
+            "adminDecision": self.admin_decision,
+            "billingInterval": self.billing_interval,
             "rejectionReason": self.rejection_reason,
             "adminNotes": self.admin_notes,
             "requestedAt": self.requested_at.isoformat() if self.requested_at else None,
@@ -627,32 +708,113 @@ class SubscriptionRequest(Base):
             "reviewedByAdminId": self.reviewed_by_admin_id,
             "startsAt": self.starts_at.isoformat() if self.starts_at else None,
             "expiresAt": self.expires_at.isoformat() if self.expires_at else None,
+            "cancelledAt": self.cancelled_at.isoformat() if self.cancelled_at else None,
+            "cancellationReason": self.cancellation_reason,
             "isActive": is_currently_active,
-            "status": self.status.capitalize() if self.status else "Pending",
             # snake_case aliases for backend/tests compatibility
             "user_id": self.user_id,
             "plan_id": self.plan_id,
             "plan_name": self.plan_name,
             "duration_days": self.duration_days,
+            "admin_approval_status": self.admin_approval_status or "pending",
+            "mandate_status": self.mandate_status or "MANDATE_PENDING",
+            "payment_method": self.payment_method,
+            "bank_name": self.bank_name,
+            "bank_account_type": self.bank_account_type,
+            "failure_reason": self.failure_reason,
             "requested_at": self.requested_at.isoformat() if self.requested_at else None,
             "starts_at": self.starts_at.isoformat() if self.starts_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "is_active": is_currently_active,
+            "payment_verification_status": self.payment_verification_status or "pending",
+            "payment_status": self.payment_status or "PAYMENT_PENDING",
+            "payment_verified_at": self.payment_verified_at.isoformat() if self.payment_verified_at else None,
+            "activated_at": self.activated_at.isoformat() if self.activated_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "razorpay_order_id": self.razorpay_order_id,
+            "razorpay_subscription_id": self.razorpay_subscription_id,
+            "razorpay_payment_id": self.razorpay_payment_id,
+            "razorpay_plan_id": self.razorpay_plan_id,
+            "admin_decision": self.admin_decision,
             "rejection_reason": self.rejection_reason,
         }
-        if include_user and self.user:
-            profile = self.user.profile
-            u_name = profile.full_name if profile and profile.full_name else (self.user.email.split("@")[0].capitalize() if self.user.email else f"Citizen #{self.user.id}")
-            u_email = self.user.email or ""
-            data["userName"] = u_name
-            data["userEmail"] = u_email
-            data["user"] = {
-                "id": self.user.id,
-                "email": u_email,
-                "mobile": self.user.mobile,
-                "name": u_name
-            }
+        u_name = self.user_name
+        if not u_name:
+            try:
+                profile = self.user.profile if self.user else None
+                u_name = profile.full_name if profile and profile.full_name else (self.user.email.split("@")[0].capitalize() if self.user and self.user.email else f"Citizen #{self.user_id}")
+            except Exception:
+                u_name = f"Citizen #{self.user_id}"
+        data["userName"] = u_name
+        data["user_name"] = u_name
+        if include_user:
+            try:
+                if self.user:
+                    u_email = self.user.email or ""
+                    data["userEmail"] = u_email
+                    data["user_email"] = u_email
+                    data["user"] = {
+                        "id": self.user.id,
+                        "email": u_email,
+                        "name": u_name
+                    }
+            except Exception:
+                pass
         return data
+
+
+class ProcessedWebhookEvent(Base):
+    __tablename__ = "processed_webhook_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String(100), unique=True, index=True, nullable=False)
+    event_type = Column(String(100), index=True, nullable=False)
+    entity_id = Column(String(100), index=True, nullable=True)
+    payload = Column(JSON, nullable=True)
+    processed_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "eventId": self.event_id,
+            "eventType": self.event_type,
+            "entityId": self.entity_id,
+            "processedAt": self.processed_at.isoformat() if self.processed_at else None
+        }
+
+
+class PaymentAuditLog(Base):
+    __tablename__ = "payment_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subscription_request_id = Column(Integer, ForeignKey("subscription_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    previous_status = Column(String(50), nullable=True)
+    new_status = Column(String(50), nullable=True)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_role = Column(String(50), default="system")
+    action = Column(String(100), nullable=False)
+    reason = Column(Text, nullable=True)
+    details = Column(JSON, nullable=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+
+    subscription_request = relationship("SubscriptionRequest", back_populates="audit_logs")
+    actor = relationship("User", foreign_keys=[actor_id])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "subscriptionRequestId": self.subscription_request_id,
+            "previousStatus": self.previous_status,
+            "newStatus": self.new_status,
+            "actorId": self.actor_id,
+            "actorRole": self.actor_role,
+            "action": self.action,
+            "reason": self.reason,
+            "details": self.details or {},
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None
+        }
+
 
 # ==========================================
 # 4. DOCUMENTS & APPLICATION DOMAIN

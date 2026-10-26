@@ -192,8 +192,8 @@ class RuleEngine:
                 "primary": 1, "8th": 1,
                 "10th": 2, "matric": 2, "ssc": 2,
                 "12th": 3, "higher secondary": 3, "hsc": 3, "intermediate": 3,
-                "diploma": 3.5, "iti": 3.5, "polytechnic": 3.5, "vocational": 3.5,
-                "graduate": 4, "b.e": 4, "b.tech": 4, "degree": 4, "b.sc": 4, "b.com": 4, "ba": 4, "bachelor": 4,
+                "diploma": 3.5, "d.ed": 3.5, "ded": 3.5, "iti": 3.5, "polytechnic": 3.5, "vocational": 3.5,
+                "graduate": 4, "b.ed": 4, "bed": 4, "b.e": 4, "b.tech": 4, "degree": 4, "b.sc": 4, "b.com": 4, "ba": 4, "bachelor": 4,
                 "postgraduate": 5, "pg": 5, "master": 5, "m.tech": 5, "mba": 5, "m.sc": 5, "doctorate": 6, "phd": 6
             }
 
@@ -222,11 +222,23 @@ class RuleEngine:
                 target_str = str(target_val).lower()
                 if target_str in user_edu_lower or user_edu_lower in target_str:
                     return True, f"Educational qualification ({user_edu}) meets condition", user_edu
-                target_lvl = 2.0
-                for k, v in edu_rank.items():
-                    if k in target_str:
-                        target_lvl = max(target_lvl, v)
-                if user_lvl >= target_lvl:
+
+                # Split composite alternative requirements like '12th Pass / D.Ed / B.Ed / Graduate' or '10th, 12th or Graduate'
+                parts = [p.strip() for p in re.split(r"[/,]|(?:\s+or\s+)", target_str) if p.strip()]
+                if not parts:
+                    parts = [target_str]
+
+                min_req_lvl = 10.0
+                has_any_match = False
+                for p in parts:
+                    if p in user_edu_lower or user_edu_lower in p:
+                        has_any_match = True
+                        break
+                    for k, v in edu_rank.items():
+                        if k in p:
+                            min_req_lvl = min(min_req_lvl, v)
+
+                if has_any_match or (min_req_lvl < 10.0 and user_lvl >= min_req_lvl):
                     return True, f"Educational qualification ({user_edu}) satisfies minimum condition ({target_val})", user_edu
                 else:
                     return False, f"Requires {target_val} qualification", user_edu
@@ -284,21 +296,31 @@ class RuleEngine:
             else:
                 return False, f"Requires {target_display} (Your occupation: {user_occ})", user_occ
 
+        # Normalize age with DOB fallback
+        if field == "age":
+            actual_age = profile.get("age")
+            if actual_age is None or actual_age == "" or actual_age == 0:
+                dob = profile.get("date_of_birth") or profile.get("dateOfBirth") or profile.get("dob")
+                if dob:
+                    from services.eligibility_service import SchemeEligibilityService
+                    computed_age = SchemeEligibilityService.parse_dob_to_age(dob)
+                    if computed_age:
+                        actual_age = computed_age
+            if actual_age is not None:
+                try:
+                    actual_num = int(actual_age)
+                    target_num = int(target_val)
+                    eval_fn = cls.OPERATORS.get(op)
+                    passed = eval_fn(actual_num, target_num) if eval_fn else (actual_num <= target_num)
+                    return passed, f"Age {actual_num} {op} {target_num}", f"{actual_num} years"
+                except Exception:
+                    pass
+            return False, f"Missing parameter: {field}", None
+
         if field not in profile or profile[field] is None:
             return False, f"Missing parameter: {field}", None
 
         actual_val = profile[field]
-
-        # Convert age if needed
-        if field == "age" and op in (">=", "<=", ">", "<", "=="):
-            try:
-                actual_num = int(actual_val)
-                target_num = int(target_val)
-                eval_fn = cls.OPERATORS.get(op)
-                passed = eval_fn(actual_num, target_num)
-                return passed, f"Age {actual_num} {op} {target_num}", f"{actual_num} years"
-            except Exception:
-                pass
 
         eval_fn = cls.OPERATORS.get(op)
         if not eval_fn:
@@ -324,11 +346,11 @@ class RuleEngine:
 
         if not rule_items:
             return {
-                "status": "eligible",
-                "match_score": 100,
+                "status": "needs_info",
+                "match_score": 50,
                 "passed_count": 0,
                 "total_count": 0,
-                "ineligible_reason": None,
+                "ineligible_reason": "Eligibility criteria details pending official verification",
                 "missing_fields": [],
                 "criteria": []
             }

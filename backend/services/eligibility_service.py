@@ -152,6 +152,30 @@ class SchemeEligibilityService:
             if calculated_age:
                 profile["age"] = calculated_age
 
+        # Standardize camelCase profile keys to snake_case
+        if profile.get("is_farmer") is None and profile.get("isFarmer") is not None:
+            profile["is_farmer"] = profile.get("isFarmer")
+        if profile.get("is_student") is None and profile.get("isStudent") is not None:
+            profile["is_student"] = profile.get("isStudent")
+        if profile.get("has_business") is None and profile.get("hasBusiness") is not None:
+            profile["has_business"] = profile.get("hasBusiness")
+        if profile.get("is_disabled") is None and profile.get("isDisabled") is not None:
+            profile["is_disabled"] = profile.get("isDisabled")
+        if profile.get("is_tax_payer") is None:
+            profile["is_tax_payer"] = bool(profile.get("isTaxPayer", False))
+        if profile.get("is_govt_employee") is None:
+            profile["is_govt_employee"] = bool(profile.get("isGovtEmployee", False))
+        if profile.get("land_holding_acres") is None and profile.get("landholdingAcres") is not None:
+            profile["land_holding_acres"] = profile.get("landholdingAcres")
+        if profile.get("annual_income") is None and profile.get("annualIncome") is not None:
+            profile["annual_income"] = profile.get("annualIncome")
+
+        p_occ_lower = str(profile.get("occupation") or "").lower().strip()
+        if "student" in p_occ_lower and profile.get("is_student") is None:
+            profile["is_student"] = True
+        if any(k in p_occ_lower for k in ["farmer", "kisan", "agri", "cultivat"]) and profile.get("is_farmer") is None:
+            profile["is_farmer"] = True
+
         requirements_satisfied: List[str] = []
         requirements_not_satisfied: List[str] = []
         missing_information: List[str] = []
@@ -447,10 +471,13 @@ class SchemeEligibilityService:
         )
 
         is_broad_social = bool(
-            scheme_cat in ("health", "social welfare", "women & child", "skill development", "public health", "food security", "family welfare")
-            or len(target_occs) >= 4
-            or any(o in ("all", "any", "general", "citizens", "all citizens", "*", "") for o in target_occs)
-            or (not is_farmer_target and not is_student_target and not is_biz_target and not is_teacher_target and not target_occs)
+            (not is_farmer_target and not is_student_target and not is_biz_target and not is_teacher_target)
+            and (
+                scheme_cat in ("health", "social welfare", "women & child", "skill development", "public health", "food security", "family welfare")
+                or len(target_occs) >= 4
+                or any(o in ("all", "any", "general", "citizens", "all citizens", "*", "") for o in target_occs)
+                or not target_occs
+            )
         )
 
         total_rules_evaluated += 1
@@ -691,8 +718,8 @@ class SchemeEligibilityService:
                     "primary": 1, "8th": 1, "8th pass": 1,
                     "10th": 2, "10th pass": 2, "matriculation": 2, "matric": 2, "ssc": 2,
                     "12th": 3, "12th pass": 3, "higher secondary": 3, "hsc": 3, "intermediate": 3,
-                    "diploma": 3.5, "iti": 3.5,
-                    "graduate": 4, "b.e.": 4, "b.e": 4, "b.tech": 4, "degree": 4, "b.sc": 4, "b.com": 4, "ba": 4,
+                    "diploma": 3.5, "iti": 3.5, "d.ed": 3.5, "ded": 3.5, "d.el.ed": 3.5,
+                    "graduate": 4, "b.e.": 4, "b.e": 4, "b.tech": 4, "degree": 4, "b.sc": 4, "b.com": 4, "ba": 4, "b.ed": 4, "bed": 4, "b.el.ed": 4,
                     "postgraduate": 5, "pg": 5, "master": 5, "m.tech": 5
                 }
                 user_level = 2  # default 10th pass if unrecognized
@@ -700,12 +727,26 @@ class SchemeEligibilityService:
                     if k in user_edu_lower:
                         user_level = max(user_level, v)
 
-                req_level = 0
-                for k, v in edu_rank.items():
-                    if k in scheme_edu:
-                        req_level = max(req_level, v)
+                # Split composite requirement strings (e.g. '12th Pass / D.Ed / B.Ed / Graduate')
+                # A citizen qualifies if their level meets the MINIMUM alternative level, or matches any keyword
+                options = [opt.strip() for opt in re.split(r'[/,]|\s+or\s+', scheme_edu) if opt.strip()]
+                option_levels = []
+                for opt in options:
+                    opt_lvl = 0
+                    for k, v in edu_rank.items():
+                        if k in opt:
+                            opt_lvl = max(opt_lvl, v)
+                    if opt_lvl > 0:
+                        option_levels.append(opt_lvl)
 
-                if user_level >= req_level or any(term in user_edu_lower for term in scheme_edu.split()):
+                req_level = min(option_levels) if option_levels else 0
+                if req_level == 0:
+                    for k, v in edu_rank.items():
+                        if k in scheme_edu:
+                            req_level = max(req_level, v)
+
+                matched_term = any(term in user_edu_lower for term in scheme_edu.split() if len(term) > 2) or any(user_edu_lower in opt or opt in user_edu_lower for opt in options)
+                if user_level >= req_level or matched_term:
                     passed_rules_count += 1
                     requirements_satisfied.append(f"Education requirement met ({user_edu})")
                     criteria_breakdown.append({
@@ -829,13 +870,32 @@ class SchemeEligibilityService:
         # 3. 'eligibility_unknown' - Reliable rules are unavailable or incomplete
         # 4. 'possibly_eligible' - No known mandatory condition failed, but some information missing
         # 5. 'eligible' - All mandatory conditions verified and satisfied
+        has_specific_criteria = bool(
+            scheme.rules
+            or scheme.income_max
+            or scheme.age_min
+            or scheme.age_max
+            or (scheme.education and scheme.education.lower() not in ("all", "any", "no formal education required", "no minimum education requirement", "no education barrier", "none", ""))
+            or scheme.target_occupations
+            or (scheme.occupation and scheme.occupation.lower() not in ("all", "any", "general", ""))
+            or scheme.is_farmer_only
+            or scheme.is_student_only
+            or scheme.is_business_only
+            or (scheme.social_category and scheme.social_category.lower() not in ("all", "any", "unrestricted", "all categories", ""))
+            or (scheme.gender and scheme.gender.lower() not in ("all", "any", ""))
+            or scheme.max_landholding_acres
+            or scheme.is_disability_required
+            or scheme.exclusions
+        )
+
         if is_closed:
             status = cls.STATUS_APPLICATIONS_CLOSED
         elif mandatory_failed:
             status = cls.STATUS_NOT_ELIGIBLE
-        elif total_rules_evaluated == 0:
+        elif not has_specific_criteria or total_rules_evaluated == 0:
             status = cls.STATUS_ELIGIBILITY_UNKNOWN
             is_unknown_rules = True
+            missing_information.append("Official eligibility rules for this scheme are pending verification from government source portals.")
         elif len(missing_information) > 0:
             status = cls.STATUS_POSSIBLY_ELIGIBLE
         else:
@@ -899,6 +959,13 @@ class SchemeEligibilityService:
             cls.STATUS_APPLICATIONS_CLOSED: "ineligible",
         }
 
+        from services.portal_health_service import PortalHealthService
+        raw_off = scheme.official_source_url
+        raw_app = scheme.application_url
+        dist_app = raw_app if (raw_app and raw_off and raw_app.rstrip('/') != raw_off.rstrip('/')) else None
+        alt_url = getattr(scheme, "alternative_url", None) or PortalHealthService.get_alternative_url(raw_off)
+        port_info = PortalHealthService.get_cached_status(raw_off)
+
         return {
             "eligibility_status": status,
             "legacy_status": legacy_status_map.get(status, "almost"),
@@ -913,9 +980,12 @@ class SchemeEligibilityService:
             "required_documents": [doc.document_name for doc in scheme.document_requirements] if scheme.document_requirements else [],
             "application_procedure": scheme.application_process or "Follow official portal guidelines to apply online.",
             "source_reference": {
-                "official_url": scheme.official_source_url,
-                "application_url": scheme.application_url or scheme.official_source_url,
+                "official_url": raw_off,
+                "application_url": dist_app,
+                "alternative_url": alt_url,
                 "source_url": scheme.source_url or scheme.official_source_url,
+                "portal_status": port_info.get("status", "reachable"),
+                "portal_status_message": port_info.get("status_message"),
                 "verification_status": scheme.source_verification_status or "verified_live",
                 "last_fetched_at": scheme.last_fetched_at.isoformat() if scheme.last_fetched_at else None,
                 "last_verified_date": scheme.last_verified_date or "12 Oct 2026",
@@ -951,6 +1021,7 @@ class SchemeEligibilityService:
         if not review_stat or review_stat not in ("approved", "published"):
             return False, f"Scheme review status is '{getattr(scheme, 'admin_review_status', None)}' (must be approved by admin)", None
 
+
         profile = dict(profile_data or {})
 
         # 2. Empty or invalid profile validation
@@ -981,15 +1052,21 @@ class SchemeEligibilityService:
         occ_lower = occ.lower()
         emp_status = str(profile.get("employment_status") or profile.get("employmentStatus") or "").lower()
 
-        # Citizen flags
-        is_user_farmer = bool(user_farmer_val is True or "farmer" in occ_lower or "kisan" in occ_lower or "agri" in occ_lower or "cultivat" in occ_lower)
-        is_user_student = bool(user_student_val is True or "student" in occ_lower)
+        # Dynamic citizen flags
+        is_farmer_in_occ = any(k in occ_lower for k in ["farmer", "kisan", "agri", "cultivat"])
+        is_student_in_occ = "student" in occ_lower
+        is_user_farmer = bool(user_farmer_val is True or is_farmer_in_occ)
+        is_user_student = bool(user_student_val is True or is_student_in_occ)
         is_user_biz = bool(user_biz_val is True or any(b in occ_lower for b in ["business", "self-employed", "entrepreneur", "artisan", "craftsperson", "shopkeeper", "retailer", "trader", "merchant", "vendor", "storekeeper"]))
         is_user_teacher = bool(
             any(t in occ_lower for t in ["teacher", "professor", "lecturer", "educator", "instructor", "faculty", "shikshak", "adhyapak", "mentor", "tutor", "academic", "teaching"])
         )
+        is_user_govt_employee = bool(
+            profile.get("is_govt_employee") is True or profile.get("isGovtEmployee") is True
+            or any(g in occ_lower for g in ["government", "govt", "sarkari", "civil service", "ias", "ips", "public sector"])
+        )
         is_user_salaried = bool(
-            (any(s in occ_lower for s in ["teacher", "professor", "lecturer", "educator", "instructor", "salaried", "employee", "corporate", "service", "job", "worker", "clerk", "nurse", "doctor", "engineer", "accountant", "staff"]) or is_user_teacher)
+            (any(s in occ_lower for s in ["teacher", "professor", "lecturer", "educator", "instructor", "salaried", "employee", "corporate", "service", "job", "worker", "clerk", "nurse", "doctor", "engineer", "accountant", "staff", "private", "clerical"]) or is_user_teacher or is_user_govt_employee)
             and not is_user_student and not is_user_farmer
         )
         is_user_unemployed = bool("unemploy" in occ_lower or emp_status == "unemployed")
@@ -1000,9 +1077,6 @@ class SchemeEligibilityService:
             user_land = float(user_land)
         except (ValueError, TypeError):
             user_land = 0.0
-
-        is_farmer_in_occ = any(k in occ_lower for k in ["farmer", "kisan", "agri", "cultivat"])
-        is_student_in_occ = "student" in occ_lower
 
         # Disambiguate when single primary occupation is declared
         if is_student_in_occ and not is_farmer_in_occ:
@@ -1015,11 +1089,12 @@ class SchemeEligibilityService:
             if not profile.get("is_dual_category"):
                 is_user_student = False
         elif occ_lower:
-            # Custom non-student, non-farmer occupation (e.g. Teacher, Housewife, Shopkeeper, etc.)
+            # Custom non-student, non-farmer occupation (e.g. Clerk, Teacher, Housewife, Shopkeeper, Private employee, Govt employee, Daily-wage worker, etc.)
             if not profile.get("is_dual_category"):
                 is_user_student = False
                 if user_land <= 0:
                     is_user_farmer = False
+
 
         # -------------------------------------------------------------
         # Rule 0: Strict Gender Restrictions (Evaluated Independently)
@@ -1113,13 +1188,19 @@ class SchemeEligibilityService:
         if is_scheme_biz_only and not is_user_biz:
             return False, f"Scheme exclusively targets business owners / artisans (Your occupation: {occ or 'Non-business'})", None
 
-        # Broad universal public welfare schemes (e.g., universal health like MJP Jan Arogya, general food security)
-        has_universal_target = any(o in ("all", "any", "general", "citizens", "all citizens", "*", "") for o in target_occs)
+        # Teacher-only / Educator-targeted schemes vs non-teacher
+        if is_scheme_teacher_target and not is_user_teacher:
+            return False, f"Scheme exclusively targets teachers and educators (Your occupation: {occ or 'Non-teacher'})", None
+
+        # Broad universal public welfare schemes (e.g., universal health like MJP Jan Arogya, general food security, solar electricity)
+        has_universal_target = any(o in ("all", "any", "general", "citizens", "all citizens", "all categories", "*", "") for o in target_occs)
         is_broad_social_scheme = (
-            scheme_cat in ("health", "public health", "food security", "social welfare", "family welfare")
+            any(k in scheme_cat for k in ["health", "public health", "food security", "social welfare", "family welfare"])
             or has_universal_target
             or (all(group in target_occs for group in ["farmer", "student", "salaried employee", "self-employed"]))
+            or (len(target_occs) >= 4 and not is_scheme_farmer_only and not is_scheme_student_only and not is_scheme_biz_only and not is_scheme_teacher_target)
         )
+
 
         # Multi-group schemes: Check if broad target_occupations covers user
         if target_occs and not is_broad_social_scheme and not has_universal_target:
@@ -1201,8 +1282,9 @@ class SchemeEligibilityService:
             e_low = str(excl).lower()
             if "tax" in e_low and (profile.get("is_tax_payer") is True or profile.get("isTaxPayer") is True):
                 return False, "Exclusion: Income tax payers are disqualified from this scheme", None
-            if ("govt" in e_low or "government" in e_low) and (profile.get("is_govt_employee") is True or profile.get("isGovtEmployee") is True):
+            if ("govt" in e_low or "government" in e_low) and is_user_govt_employee:
                 return False, "Exclusion: Government employees are disqualified from this scheme", None
+
 
         # -------------------------------------------------------------
         # Section 5: Concise Match Reason
@@ -1269,7 +1351,8 @@ class SchemeEligibilityService:
             ).filter(
                 Scheme.is_active == True,
                 Scheme.status == "published",
-                Scheme.admin_review_status.in_(["approved", "published"])
+                Scheme.admin_review_status.in_(["approved", "published"]),
+                (Scheme.is_test == False) | (Scheme.is_test.is_(None))
             )
 
             if category_filter and category_filter.lower() != "all":
@@ -1330,7 +1413,8 @@ class SchemeEligibilityService:
                 # Strict relevance check
                 is_relevant, rejection_reason, match_reason = cls.is_scheme_relevant(scheme, profile_data)
                 
-                g_eval = gemini_evals.get(scheme.id) if use_gemini else None
+                g_eval = (gemini_evals.get(scheme.id) or gemini_evals.get(scheme.slug)) if use_gemini else None
+
                 if g_eval:
                     # Gemini provides qualitative match reasoning and rich why_matched explanations.
                     # It MUST NOT override verified deterministic relevance or invent restrictions.
@@ -1371,10 +1455,24 @@ class SchemeEligibilityService:
 
                 logger.info(f"[SCHEME RETAINED] {scheme.name}: status={eval_result['eligibility_status']}, score={eval_result['match_score']}")
 
-                # Check status filter
+                # Strict Scheme Eligibility Filtering:
+                # When include_ineligible is False and caller is not explicitly requesting ineligible or closed schemes,
+                # strictly exclude schemes for which the user does not qualify or whose applications are closed.
                 e_status = eval_result["eligibility_status"]
                 leg_status = eval_result["legacy_status"]
 
+                if not include_ineligible:
+                    is_ineligible = e_status == cls.STATUS_NOT_ELIGIBLE or leg_status == "ineligible"
+                    is_closed = e_status == cls.STATUS_APPLICATIONS_CLOSED
+                    target_filter = (status_filter or "").lower()
+                    if is_ineligible and target_filter not in ("not_eligible", "ineligible"):
+                        logger.info(f"[SCHEME INELIGIBLE EXCLUDED] {scheme.name} excluded: user does not satisfy criteria")
+                        continue
+                    if is_closed and target_filter not in ("applications_closed", "closed"):
+                        logger.info(f"[SCHEME CLOSED EXCLUDED] {scheme.name} excluded: applications closed")
+                        continue
+
+                # Check status filter
                 if status_filter and status_filter.lower() != "all":
                     s_filter = status_filter.lower()
                     if s_filter not in (e_status, leg_status):
@@ -1383,9 +1481,11 @@ class SchemeEligibilityService:
                 # Prepare response dictionary with all rich metadata
                 scheme_dict = scheme.to_dict(include_rules=False)
                 scheme_dict["eligibilityStatus"] = eval_result["eligibility_status"]
+                scheme_dict["eligibility_status"] = eval_result["eligibility_status"]
                 scheme_dict["legacyEligibilityStatus"] = eval_result["legacy_status"]
                 scheme_dict["applicationStatus"] = eval_result["application_status"]
                 scheme_dict["matchScore"] = eval_result["match_score"]
+                scheme_dict["match_score"] = eval_result["match_score"]
                 scheme_dict["matchReason"] = eval_result.get("match_reason") or match_reason
                 scheme_dict["whyMatched"] = eval_result["why_matched"]
                 scheme_dict["requirementsSatisfied"] = eval_result["requirements_satisfied"]
@@ -1455,6 +1555,20 @@ class SchemeEligibilityService:
                 -s.get("matchScore", 0)
             ))
 
-            return results
+            # In-memory stable deduplication safeguard: guarantee one canonical record per scheme
+            deduped_results = []
+            seen_schemes = set()
+            for s in results:
+                s_id = s.get("id") or s.get("slug")
+                s_name_norm = re.sub(r'[^a-z0-9]', '', str(s.get("name") or "").lower())
+                if s_id in seen_schemes or (s_name_norm and s_name_norm in seen_schemes):
+                    continue
+                if s_id:
+                    seen_schemes.add(s_id)
+                if s_name_norm:
+                    seen_schemes.add(s_name_norm)
+                deduped_results.append(s)
+
+            return deduped_results
         finally:
             db.close()

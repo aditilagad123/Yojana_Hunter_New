@@ -17,7 +17,8 @@ SCHEMES_DATA = [
         "department": "Ministry of Education",
         "level": "Central Scheme",
         "benefits": "Up to ₹6.5 Lakh",
-        "official_source_url": "https://www.vidyalakshmi.co.in",
+        "official_source_url": "https://pmvidyalaxmi.co.in/",
+        "application_url": "https://pmvidyalaxmi.co.in/",
         "last_verified_date": "01 Oct 2026",
         "priority": "High Priority",
         "state": "All India",
@@ -135,6 +136,7 @@ SCHEMES_DATA = [
         "level": "State Scheme",
         "benefits": "Up to ₹5 Lakh cashless treatment",
         "official_source_url": "https://www.jeevandayee.gov.in",
+        "alternative_url": "https://arogya.maharashtra.gov.in/",
         "last_verified_date": "05 Oct 2026",
         "priority": "Medium Priority",
         "state": "Maharashtra",
@@ -538,6 +540,62 @@ SCHEMES_DATA = [
             "Bank Passbook",
             "Hamipatra (Affidavit)"
         ]
+    },
+    {
+        "slug": "post-matric-scholarship-to-obc-students",
+        "name": "Post Matric Scholarship to OBC Students",
+        "short_description": "Financial assistance for eligible students belonging to OBC category in Maharashtra",
+        "description": "According to the MahaDBT scheme listing, this scheme provides educational financial assistance to eligible OBC students, including applicable tuition fees, examination fees and maintenance allowance.",
+        "category": "Education",
+        "department": "VJNT, OBC and SBC Welfare Department, Government of Maharashtra",
+        "level": "State Scheme",
+        "benefits": "Tuition fee and examination fee assistance as applicable under the scheme plus maintenance allowance.",
+        "official_source_url": "https://mahadbt.maharashtra.gov.in/SchemeData/SchemeData?str=E9DDFA703C38E51AB02E984835E89FEFDB316E301CE6A991F41C5D42B01A7D7E",
+        "application_url": "https://mahadbt2.maharashtra.gov.in/",
+        "last_verified_date": "12 Oct 2026",
+        "priority": "High Priority",
+        "state": "Maharashtra",
+        "eligible_states": ["Maharashtra"],
+        "target_occupations": ["Student"],
+        "is_student_only": True,
+        "age_min": 18,
+        "age_max": 30,
+        "income_max": 250021.0,
+        "rules": [
+            {
+                "rule_name": "Annual Income Limit",
+                "rule_description": "Annual family income <= 250,000",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": 250000.0},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Education Qualification",
+                "rule_description": "Minimum qualification: Post-matriculation education in a government-approved course",
+                "rule_logic": {"field": "education", "op": "in", "value": ["Post-matriculation education in a government-approved course", "Degree", "B.E.", "Diploma", "Graduate"]},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Occupation",
+                "rule_description": "Target group: Student belonging to OBC category",
+                "rule_logic": {"field": "occupation", "op": "in", "value": ["Student", "Student belonging to OBC category"]},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "State Residence",
+                "rule_description": "Resident of Maharashtra",
+                "rule_logic": {"field": "state", "op": "eq", "value": "Maharashtra"},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            "Aadhaar Card",
+            "Caste Certificate",
+            "Income Certificate / Income Declaration",
+            "Caste Validity Certificate (professional courses, where mandatory)",
+            "HSC / SSC / Last Examination Marksheet",
+            "Gap Certificate (if applicable)",
+            "Leaving Certificate"
+        ]
     }
 ]
 
@@ -608,6 +666,7 @@ def seed_database():
                     official_source_url=s_data["official_source_url"],
                     application_url=s_data.get("application_url", s_data["official_source_url"]),
                     source_url=s_data.get("source_url", s_data["official_source_url"]),
+                    alternative_url=s_data.get("alternative_url"),
                     application_process=s_data.get("application_process"),
                     last_verified_date=s_data["last_verified_date"],
                     priority=s_data["priority"],

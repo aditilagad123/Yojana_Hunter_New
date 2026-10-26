@@ -91,7 +91,7 @@ export async function apiFetchDetailed<T>(
 
     if (!response.ok) {
       return {
-        data: null,
+        data: (json || null) as T | null,
         error: json?.message || json?.error || `Request failed with status ${status}`,
         status,
       };

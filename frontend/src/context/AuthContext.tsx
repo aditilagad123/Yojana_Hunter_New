@@ -17,7 +17,9 @@ import {
   getActiveProfileId, 
   setActiveProfileId,
   getStoredProfilesList,
-  saveStoredProfilesList
+  saveStoredProfilesList,
+  emptyProfile,
+  clearAllUserData
 } from "@/lib/storage";
 import { fetchProfiles, fetchProfile } from "@/services/profileService";
 
@@ -51,11 +53,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     async function initAuth() {
       if (checkIsLoggedIn()) {
         const stored = getStoredUser();
-        const storedProf = getStoredProfile();
-        const storedList = getStoredProfilesList();
-        const storedActiveId = getActiveProfileId();
 
         if (stored && stored.role !== 'admin') {
+          const storedProf = getStoredProfile(stored.id);
+          const storedList = getStoredProfilesList(stored.id);
+          const storedActiveId = getActiveProfileId(stored.id);
+
           setUser(stored);
           setProfile(storedProf);
           setFamilyProfiles(storedList);
@@ -75,24 +78,42 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const remoteProfiles = await fetchProfiles();
             if (remoteProfiles && remoteProfiles.length > 0) {
               setFamilyProfiles(remoteProfiles);
-              saveStoredProfilesList(remoteProfiles);
+              saveStoredProfilesList(remoteProfiles, remote.user.id);
 
               // Find active profile
-              const active = (storedActiveId && remoteProfiles.find(p => p.id === storedActiveId))
+              const activeId = getActiveProfileId(remote.user.id);
+              const active = (activeId && remoteProfiles.find(p => p.id === activeId))
                 || remoteProfiles.find(p => p.relationship === "Self")
                 || remoteProfiles[0];
 
               if (active) {
                 setProfile(active);
-                saveStoredProfile(active);
+                saveStoredProfile(active, remote.user.id);
                 if (active.id) {
-                  setActiveProfileId(active.id);
+                  setActiveProfileId(active.id, remote.user.id);
                   setActiveProfileIdState(active.id);
                 }
               }
-            } else if (remote.profile) {
-              setProfile(remote.profile);
-              setFamilyProfiles([remote.profile]);
+            } else {
+              setFamilyProfiles([]);
+              saveStoredProfilesList([], remote.user.id);
+              if (remote.profile) {
+                setProfile(remote.profile);
+                saveStoredProfile(remote.profile, remote.user.id);
+              } else {
+                const clean: UserProfile = {
+                  ...emptyProfile,
+                  userId: remote.user.id,
+                  name: remote.user.name || remote.user.email?.split("@")[0] || "",
+                  relationship: "Self",
+                  isProfileSaved: false,
+                  completenessPercent: 0
+                };
+                setProfile(clean);
+                saveStoredProfile(clean, remote.user.id);
+              }
+              setActiveProfileId(null, remote.user.id);
+              setActiveProfileIdState(null);
             }
           } else {
             setUser(null);
@@ -115,27 +136,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const refreshFamilyProfiles = async (): Promise<UserProfile[]> => {
     const list = await fetchProfiles();
+    const activeUserId = user?.id;
     if (list && list.length > 0) {
       setFamilyProfiles(list);
-      saveStoredProfilesList(list);
+      saveStoredProfilesList(list, activeUserId);
 
       // Verify active profile is still in list
-      const currentActiveId = getActiveProfileId();
+      const currentActiveId = getActiveProfileId(activeUserId);
       const currentActive = list.find(p => p.id === currentActiveId) 
         || list.find(p => p.relationship === "Self") 
         || list[0];
 
       if (currentActive) {
         setProfile(currentActive);
-        saveStoredProfile(currentActive);
+        saveStoredProfile(currentActive, activeUserId);
         if (currentActive.id) {
-          setActiveProfileId(currentActive.id);
+          setActiveProfileId(currentActive.id, activeUserId);
           setActiveProfileIdState(currentActive.id);
         }
       }
       return list;
+    } else {
+      setFamilyProfiles([]);
+      saveStoredProfilesList([], activeUserId);
+      return [];
     }
-    return [];
   };
 
   const switchActiveProfile = async (profileOrId: UserProfile | number) => {
@@ -152,9 +177,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (targetProfile) {
       setProfile(targetProfile);
-      saveStoredProfile(targetProfile);
+      saveStoredProfile(targetProfile, user?.id);
       if (targetProfile.id) {
-        setActiveProfileId(targetProfile.id);
+        setActiveProfileId(targetProfile.id, user?.id);
         setActiveProfileIdState(targetProfile.id);
       }
     }
@@ -162,6 +187,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (credentials: LoginCredentials) => {
     setLoading(true);
+    clearAllUserData();
     const res = await apiLogin(credentials);
     if (res.success && res.data) {
       if (res.data.user.role === 'admin') {
@@ -171,6 +197,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(res.data.user);
       if (res.data.profile) {
         setProfile(res.data.profile);
+        saveStoredProfile(res.data.profile, res.data.user.id);
+      } else {
+        const clean: UserProfile = {
+          ...emptyProfile,
+          userId: res.data.user.id,
+          name: res.data.user.name || res.data.user.email?.split("@")[0] || "",
+          relationship: "Self",
+          isProfileSaved: false,
+          completenessPercent: 0
+        };
+        setProfile(clean);
+        saveStoredProfile(clean, res.data.user.id);
       }
       await refreshFamilyProfiles();
       setLoading(false);
@@ -182,13 +220,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const register = async (data: RegisterData) => {
     setLoading(true);
+    clearAllUserData();
     const res = await apiRegister(data);
     if (res.success && res.data) {
       setUser(res.data.user);
-      if (res.data.profile) {
-        setProfile(res.data.profile);
-      }
-      await refreshFamilyProfiles();
+      const initialProfile: UserProfile = res.data.profile || {
+        ...emptyProfile,
+        userId: res.data.user.id,
+        name: data.name || res.data.user.email?.split("@")[0] || "",
+        relationship: "Self",
+        isProfileSaved: false,
+        completenessPercent: 0
+      };
+      setProfile(initialProfile);
+      saveStoredProfile(initialProfile, res.data.user.id);
+      setFamilyProfiles([]);
+      saveStoredProfilesList([], res.data.user.id);
+      setActiveProfileId(null, res.data.user.id);
+      setActiveProfileIdState(null);
       setLoading(false);
       return { success: true };
     }
@@ -198,13 +247,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = async () => {
     setLoading(true);
-    await apiLogout();
-    setActiveProfileId(null);
-    setUser(null);
-    setProfile(null);
-    setFamilyProfiles([]);
-    setActiveProfileIdState(null);
-    setLoading(false);
+    try {
+      await apiLogout();
+    } finally {
+      clearAllUserData();
+      setActiveProfileId(null);
+      setUser(null);
+      setProfile(null);
+      setFamilyProfiles([]);
+      setActiveProfileIdState(null);
+      setLoading(false);
+    }
   };
 
   const refreshUser = async () => {
@@ -219,9 +272,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updateProfileState = (newProfile: UserProfile) => {
     setProfile(newProfile);
-    saveStoredProfile(newProfile);
+    const activeUserId = user?.id || newProfile.userId || (newProfile as any).user_id;
+    saveStoredProfile(newProfile, activeUserId);
     if (newProfile.id) {
-      setActiveProfileId(newProfile.id);
+      setActiveProfileId(newProfile.id, activeUserId);
       setActiveProfileIdState(newProfile.id);
     }
     // Update in familyProfiles list
@@ -230,11 +284,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (idx >= 0) {
         const next = [...prev];
         next[idx] = newProfile;
-        saveStoredProfilesList(next);
+        saveStoredProfilesList(next, activeUserId);
         return next;
       }
       const next = [...prev, newProfile];
-      saveStoredProfilesList(next);
+      saveStoredProfilesList(next, activeUserId);
       return next;
     });
   };

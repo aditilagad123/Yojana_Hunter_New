@@ -30,6 +30,15 @@ class GeminiService:
 
     _client = None
     _cached_api_key = None
+    _QUOTA_COOLDOWN_UNTIL: float = 0.0
+
+    @classmethod
+    def is_quota_cooling_down(cls) -> bool:
+        return time.time() < cls._QUOTA_COOLDOWN_UNTIL
+
+    @classmethod
+    def set_quota_cooldown(cls, seconds: float = 300.0) -> None:
+        cls._QUOTA_COOLDOWN_UNTIL = time.time() + seconds
 
     @classmethod
     def get_api_key(cls) -> str:
@@ -103,7 +112,11 @@ class GeminiService:
             raise ValueError("GEMINI_API_KEY is not configured in backend/.env.")
 
         if cls._client is None or cls._cached_api_key != current_key:
-            cls._client = genai.Client(api_key=current_key)
+            http_opts = types.HttpOptions(timeout=15000) if types and hasattr(types, "HttpOptions") else None
+            if http_opts:
+                cls._client = genai.Client(api_key=current_key, http_options=http_opts)
+            else:
+                cls._client = genai.Client(api_key=current_key)
             cls._cached_api_key = current_key
 
         return cls._client
@@ -266,6 +279,10 @@ class GeminiService:
     @classmethod
     def call_with_retry(cls, fn, max_retries: int = 3, initial_delay: float = 1.5):
         """Executes a Gemini API call with bounded retries and exponential backoff."""
+        if cls.is_quota_cooling_down():
+            remaining = int(cls._QUOTA_COOLDOWN_UNTIL - time.time())
+            raise RuntimeError(f"RESOURCE_EXHAUSTED: Gemini API quota cooling down ({remaining}s remaining). Serving verified schemes directly from database.")
+
         delay = initial_delay
         last_exception = None
 
@@ -275,7 +292,18 @@ class GeminiService:
             except Exception as e:
                 last_exception = e
                 err_str = cls.sanitize_error_message(str(e))
-                is_transient = any(code in err_str for code in ["429", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "timeout", "timed out"])
+                is_quota = any(code in err_str for code in ["429", "RESOURCE_EXHAUSTED"])
+                if is_quota:
+                    if attempt < max_retries:
+                        logger.warning(f"Transient quota error calling Gemini (attempt {attempt}/{max_retries}). Retrying in {delay:.2f}s: {err_str}")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    cls.set_quota_cooldown(300.0)
+                    logger.warning(f"Gemini quota exhausted (429 RESOURCE_EXHAUSTED). Activated 300s cooldown. Existing database schemes are unaffected: {err_str}")
+                    raise RuntimeError("RESOURCE_EXHAUSTED: Daily Gemini quota reached. Existing verified database schemes are displayed.") from e
+
+                is_transient = any(code in err_str for code in ["503", "UNAVAILABLE", "timeout", "timed out"])
 
                 if attempt == max_retries or not is_transient:
                     logger.error(f"Gemini API call failed permanently on attempt {attempt}/{max_retries}: {err_str}")
@@ -309,6 +337,17 @@ class GeminiService:
                 "grounding_queries": [],
                 "error": "GEMINI_API_KEY is not configured in backend/.env",
                 "quota_exhausted": False,
+            }
+
+        if cls.is_quota_cooling_down():
+            remaining = int(cls._QUOTA_COOLDOWN_UNTIL - time.time())
+            return {
+                "success": False,
+                "schemes": [],
+                "citations": [],
+                "grounding_queries": [],
+                "error": f"Gemini API quota cooling down ({remaining}s remaining). Existing database schemes are active.",
+                "quota_exhausted": True,
             }
 
         client = cls.get_client()
@@ -438,13 +477,16 @@ Return ONLY valid JSON.
 
         if response is None:
             err_str = cls.sanitize_error_message(str(last_error))
+            is_quota = "RESOURCE_EXHAUSTED" in err_str or "429" in err_str
+            if is_quota:
+                cls.set_quota_cooldown(300.0)
             return {
                 "success": False,
                 "schemes": [],
                 "citations": [],
                 "grounding_queries": [],
                 "error": err_str,
-                "quota_exhausted": "RESOURCE_EXHAUSTED" in err_str or "429" in err_str,
+                "quota_exhausted": is_quota,
             }
 
         # Extract raw text

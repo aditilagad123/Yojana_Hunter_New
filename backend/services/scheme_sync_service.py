@@ -767,6 +767,567 @@ VERIFIED_SCHEMES_CATALOGUE = [
             {"name": "Highest Degree Certificate", "mandatory": True, "desc": "Academic qualification verification"},
             {"name": "Bank Passbook with IFSC", "mandatory": True, "desc": "Direct Benefit Transfer account"}
         ]
+    },
+    {
+        "slug": "pm-vidyalakshmi",
+        "name": "PM Vidyalakshmi Scheme",
+        "short_description": "Collateral-free, guarantor-free education loan with up to 75% credit guarantee and 3% interest subvention for higher education in top 860 NIRF-ranked institutions.",
+        "description": "PM Vidyalakshmi is a Central Sector Scheme launched by the Ministry of Education to provide financial support to meritorious students pursuing higher studies in top-ranked higher education institutions (HEIs). Under the scheme, students admitted to eligible institutions can avail collateral-free, guarantor-free education loans up to ₹7.5 Lakh with 75% credit guarantee and 3% interest subvention for annual family incomes up to ₹8 Lakh.",
+        "benefits": "Collateral-free and guarantor-free education loan up to ₹7.5 Lakh; 75% credit guarantee by GoI; 3% interest subvention during moratorium period for family income up to ₹8 Lakh.",
+        "category": "Education",
+        "department": "Department of Higher Education, Ministry of Education, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://pmvidyalaxmi.co.in/",
+        "application_url": "https://pmvidyalaxmi.co.in/",
+        "source_url": "https://pmvidyalaxmi.co.in/",
+        "application_process": "1. Visit the official portal https://pmvidyalakshmi.dos.gov.in/\n2. Register with student Aadhaar and email.\n3. Fill in student profile, admission details in eligible NIRF institution, and loan requirement.\n4. Apply directly to scheduled commercial banks through the unified dashboard.\n5. Track loan sanction and interest subvention directly via DBT.",
+        "age_min": 16,
+        "age_max": 30,
+        "income_max": 800000.0,
+        "occupation": "Student",
+        "target_occupations": ["Student"],
+        "target_beneficiary_groups": ["Students", "Higher Education Scholars"],
+        "eligible_states": ["All India"],
+        "education": "12th Pass / Graduate / Post Graduate",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": True,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["Full-time corporate employee", "Family income above ₹8 Lakh for interest subvention"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Student Status",
+                "rule_description": "Must be an active student enrolled in higher education",
+                "rule_logic": {"field": "is_student", "op": "eq", "value": True},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Family Income Threshold",
+                "rule_description": "Annual family income must not exceed ₹8,00,000",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": 800000.0},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Admission Letter / Fee Receipt", "mandatory": True, "desc": "Proof of enrollment in recognized higher education institution"},
+            {"name": "Income Certificate", "mandatory": True, "desc": "Competent authority family income certificate"},
+            {"name": "Bank Account Details", "mandatory": True, "desc": "Aadhaar-seeded student bank account"}
+        ]
+    },
+    {
+        "slug": "post-matric-scholarship",
+        "name": "Post Matric Scholarship (State Govt.)",
+        "short_description": "Tuition fees, exam fees, and monthly maintenance allowance for post-secondary students.",
+        "description": "Post Matric Scholarship scheme provided by Government of Maharashtra through the MahaDBT portal for students pursuing post-matriculation courses in recognized colleges and universities. Reimburses 100% compulsory tuition and examination fees along with living allowance.",
+        "benefits": "100% Tuition fees, examination fees reimbursement and monthly maintenance allowance of ₹700 to ₹1,200.",
+        "category": "Education",
+        "department": "Department of Higher & Technical Education, Government of Maharashtra",
+        "level": "State Scheme",
+        "state": "Maharashtra",
+        "official_source_url": "https://mahadbt.maharashtra.gov.in/",
+        "application_url": "https://mahadbt.maharashtra.gov.in/",
+        "source_url": "https://mahadbt.maharashtra.gov.in/",
+        "application_process": "1. Visit MahaDBT portal https://mahadbt.maharashtra.gov.in/\n2. Register with Aadhaar number and create applicant profile.\n3. Complete domicile, caste/category, and family income verification.\n4. Select institution, course, and submit scholarship application before the deadline.",
+        "age_min": 15,
+        "age_max": 30,
+        "income_max": 250000.0,
+        "occupation": "Student",
+        "target_occupations": ["Student"],
+        "target_beneficiary_groups": ["Post-Matric Students", "College Students"],
+        "eligible_states": ["Maharashtra"],
+        "education": "10th Pass / 12th Pass / Graduate",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": True,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["Annual family income exceeding ₹2.5 Lakh", "Non-Maharashtra residents"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Student Enrollment",
+                "rule_description": "Must be an active student pursuing post-matric education",
+                "rule_logic": {"field": "is_student", "op": "eq", "value": True},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Income Limit",
+                "rule_description": "Family income must not exceed ₹2,50,000",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": 250000.0},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Maharashtra Domicile",
+                "rule_description": "Must reside in Maharashtra",
+                "rule_logic": {"field": "state", "op": "eq", "value": "Maharashtra"},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Domicile Certificate", "mandatory": True, "desc": "Proof of Maharashtra residence"},
+            {"name": "Income Certificate from Tahsildar", "mandatory": True, "desc": "Income proof below ₹2.5 Lakh"},
+            {"name": "College Admission Fee Receipt", "mandatory": True, "desc": "Current academic year receipt"}
+        ]
+    },
+    {
+        "slug": "post-matric-scholarship-to-obc-students",
+        "name": "Post Matric Scholarship to OBC Students",
+        "short_description": "Full fee reimbursement and monthly stipend for Other Backward Class (OBC) students studying in Maharashtra.",
+        "description": "Scheme implemented by VJNT, OBC and SBC Welfare Department of Maharashtra on MahaDBT for Other Backward Class (OBC) students pursuing post-matric education. Provides tuition fee waivers, examination fee waivers, and monthly stipends.",
+        "benefits": "50% to 100% tuition and examination fee concession plus maintenance allowance up to ₹4,250 per term.",
+        "category": "Education",
+        "department": "VJNT, OBC and SBC Welfare Department, Government of Maharashtra",
+        "level": "State Scheme",
+        "state": "Maharashtra",
+        "official_source_url": "https://mahadbt.maharashtra.gov.in/",
+        "application_url": "https://mahadbt.maharashtra.gov.in/",
+        "source_url": "https://mahadbt.maharashtra.gov.in/",
+        "application_process": "1. Visit MahaDBT at https://mahadbt.maharashtra.gov.in/\n2. Login with Applicant credentials.\n3. Upload valid Non-Creamy Layer and Caste Certificate.\n4. Link Aadhaar-seeded bank account and apply under VJNT/OBC section.",
+        "age_min": 15,
+        "age_max": 30,
+        "income_max": 250000.0,
+        "occupation": "Student",
+        "target_occupations": ["Student"],
+        "target_beneficiary_groups": ["OBC Students", "Higher Education Scholars"],
+        "eligible_states": ["Maharashtra"],
+        "education": "10th Pass / 12th Pass / Graduate",
+        "gender": "All",
+        "social_category": "OBC",
+        "is_farmer_only": False,
+        "is_student_only": True,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["General category applicants", "Family income above ₹2.5 Lakh"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Student Status",
+                "rule_description": "Must be an enrolled student",
+                "rule_logic": {"field": "is_student", "op": "eq", "value": True},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "OBC Category",
+                "rule_description": "Must belong to OBC category",
+                "rule_logic": {"field": "category", "op": "eq", "value": "OBC"},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Income Limit",
+                "rule_description": "Family income must not exceed ₹2,50,000",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": 250000.0},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "OBC Caste Certificate", "mandatory": True, "desc": "Issued by Sub-Divisional Officer"},
+            {"name": "Non-Creamy Layer Certificate", "mandatory": True, "desc": "Valid for current financial year"},
+            {"name": "Income Certificate", "mandatory": True, "desc": "Tahsildar issued income proof"}
+        ]
+    },
+    {
+        "slug": "skill-india-training",
+        "name": "Skill India — Training Program (PMKVY)",
+        "short_description": "Free industry-aligned skill certification, assessment, and placement assistance under PMKVY.",
+        "description": "Pradhan Mantri Kaushal Vikas Yojana (PMKVY) is the flagship scheme of the Ministry of Skill Development & Entrepreneurship (MSDE). It enables youth and job seekers to take up industry-relevant skill training that helps them secure a better livelihood. Free training, certification, and monetary rewards upon assessment.",
+        "benefits": "100% free technical/vocational training, government recognized NSQF certificate, and monetary reward of ₹8,000 on completion.",
+        "category": "Skill Development",
+        "department": "Ministry of Skill Development & Entrepreneurship, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://www.skillindia.gov.in/",
+        "application_url": "https://www.skillindia.gov.in/",
+        "source_url": "https://www.skillindia.gov.in/",
+        "application_process": "1. Visit Skill India Digital portal at https://www.skillindia.gov.in/\n2. Register using mobile number and Aadhaar e-KYC.\n3. Choose interested sector and accredited training centre.\n4. Complete hands-on training and clear third-party assessment to obtain certificate.",
+        "age_min": 15,
+        "age_max": 45,
+        "income_max": None,
+        "occupation": "Unemployed Person, Youth & Students",
+        "target_occupations": ["Unemployed Person", "Student", "Youth", "Self-employed", "Employee"],
+        "target_beneficiary_groups": ["Youth", "Job Seekers", "Students"],
+        "eligible_states": ["All India"],
+        "education": "No Formal Education / 8th Pass / 10th Pass / 12th Pass",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": [],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Eligible Age Bracket",
+                "rule_description": "Age between 15 and 45 years",
+                "rule_logic": {"field": "age", "op": "between", "value": [15, 45]},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Bank Passbook", "mandatory": True, "desc": "For direct benefit reward credit"}
+        ]
+    },
+    {
+        "slug": "mjp-jan-arogya",
+        "name": "Mahatma Jyotiba Phule Jan Arogya Yojana (MJPJAY)",
+        "short_description": "Cashless hospitalization health insurance coverage up to ₹5,00,000 per family per year in Maharashtra.",
+        "description": "Mahatma Jyotiba Phule Jan Arogya Yojana is the flagship health assurance scheme of Government of Maharashtra. It provides cashless medical treatment across 1,356 medical and surgical procedures in empaneled network hospitals for all families holding valid ration cards in Maharashtra.",
+        "benefits": "Cashless hospitalization coverage up to ₹5 Lakh per family per year covering critical illness, surgeries, and post-operative care.",
+        "category": "Health & Wellness",
+        "department": "Public Health Department, Government of Maharashtra",
+        "level": "State Scheme",
+        "state": "Maharashtra",
+        "official_source_url": "https://www.jeevandayee.gov.in/",
+        "application_url": "https://www.jeevandayee.gov.in/",
+        "source_url": "https://www.jeevandayee.gov.in/",
+        "application_process": "1. Approach the Arogyamitra at any empaneled government or private network hospital.\n2. Present your Ration Card (Yellow, Orange, or White) and Aadhaar card.\n3. Arogyamitra generates cashless pre-authorization referral without any advance deposit.",
+        "age_min": 0,
+        "age_max": 120,
+        "income_max": None,
+        "occupation": "All Citizens / Families in Maharashtra",
+        "target_occupations": ["All Categories", "Farmer", "Student", "Employee", "Salaried Employee", "Self-employed", "Shopkeeper", "Housewife", "Homemaker", "Unemployed Person", "Artisan / Craftsperson", "Teacher"],
+        "target_beneficiary_groups": ["All Maharashtra Citizens", "Families in Maharashtra"],
+        "eligible_states": ["Maharashtra"],
+        "education": "No Formal Education",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["Non-Maharashtra residents"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Maharashtra Domicile",
+                "rule_description": "Must reside in Maharashtra",
+                "rule_logic": {"field": "state", "op": "eq", "value": "Maharashtra"},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Ration Card", "mandatory": True, "desc": "Valid Maharashtra ration card"}
+        ]
+    },
+    {
+        "slug": "naps-apprenticeship",
+        "name": "National Apprenticeship Promotion Scheme (NAPS)",
+        "short_description": "On-the-job apprenticeship training with 25% stipend support up to ₹1,500/month by Government of India.",
+        "description": "National Apprenticeship Promotion Scheme (NAPS) by the Ministry of Skill Development & Entrepreneurship promotes apprenticeship training across industrial establishments. Under NAPS-2, government directly shares stipend with establishments up to ₹1,500 per month per apprentice.",
+        "benefits": "Monthly stipend (₹6,000 - ₹12,000) with Government contributing ₹1,500/month directly via DBT; National Apprenticeship Certificate.",
+        "category": "Skill Development",
+        "department": "Ministry of Skill Development & Entrepreneurship, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://www.apprenticeshipindia.gov.in/",
+        "application_url": "https://www.apprenticeshipindia.gov.in/",
+        "source_url": "https://www.apprenticeshipindia.gov.in/",
+        "application_process": "1. Register on apprenticeship portal https://www.apprenticeshipindia.gov.in/\n2. Complete eKYC and profile creation.\n3. Search and apply for active apprenticeship vacancies across public and private sector enterprises.",
+        "age_min": 16,
+        "age_max": 35,
+        "income_max": None,
+        "occupation": "Apprentices, Students & Job Seekers",
+        "target_occupations": ["Student", "Unemployed Person", "Youth", "Self-employed"],
+        "target_beneficiary_groups": ["Youth", "Students", "Apprentices"],
+        "eligible_states": ["All India"],
+        "education": "8th Pass / 10th Pass / 12th Pass / ITI / Diploma / Graduate",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": [],
+        "priority": "Medium Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Apprentice Age Range",
+                "rule_description": "Age between 16 and 35 years",
+                "rule_logic": {"field": "age", "op": "between", "value": [16, 35]},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Educational Marksheet", "mandatory": True, "desc": "8th/10th/ITI/Diploma marksheet"}
+        ]
+    },
+    {
+        "slug": "pm-internship-scheme",
+        "name": "PM Internship Scheme in Top 500 Companies",
+        "short_description": "12-month paid internship with ₹5,000 monthly stipend and one-time ₹6,000 grant in top Indian corporations.",
+        "description": "The Prime Minister Internship Scheme provides 12 months of internship opportunities in India's top 500 companies. Interns gain practical corporate work experience, receive ₹5,000 per month as stipend (₹4,500 from GoI via DBT + ₹500 from company CSR), plus a one-time grant of ₹6,000 for incidentals.",
+        "benefits": "₹5,000 monthly stipend, ₹6,000 one-time incidentals grant, and insurance coverage under PMJJBY and PMSBY.",
+        "category": "Employment & Enterprise",
+        "department": "Ministry of Corporate Affairs, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://pminternship.mca.gov.in/",
+        "application_url": "https://pminternship.mca.gov.in/",
+        "source_url": "https://pminternship.mca.gov.in/",
+        "application_process": "1. Visit the portal at https://pminternship.mca.gov.in/\n2. Register with Aadhaar e-KYC.\n3. Fill in qualifications (10th/12th/ITI/Polytechnic/Graduation).\n4. Select up to 5 internship opportunities in top companies.\n5. Offer letter released digitally upon company selection.",
+        "age_min": 21,
+        "age_max": 24,
+        "income_max": 800000.0,
+        "occupation": "Unemployed Youth & Students",
+        "target_occupations": ["Unemployed Person", "Student", "Youth"],
+        "target_beneficiary_groups": ["Youth", "Unemployed Graduates", "Students"],
+        "eligible_states": ["All India"],
+        "education": "10th Pass / 12th Pass / ITI / Diploma / Graduate",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["Full-time employee in government or corporate", "Income tax payer family", "IIT/IIM/IISER/CA graduates"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Age Restriction",
+                "rule_description": "Age between 21 and 24 years",
+                "rule_logic": {"field": "age", "op": "between", "value": [21, 24]},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Family Income Below ₹8 Lakh",
+                "rule_description": "Annual family income must not exceed ₹8,00,000",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": 800000.0},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Educational Certificates", "mandatory": True, "desc": "10th/12th/Diploma/Degree"},
+            {"name": "Self-Declaration on Employment", "mandatory": True, "desc": "Declaration of non-full-time employment"}
+        ]
+    },
+    {
+        "slug": "pm-vishwakarma",
+        "name": "PM Vishwakarma Scheme",
+        "short_description": "Recognition, ₹15,000 toolkit incentive, free skill training with ₹500/day stipend, and collateral-free loans up to ₹3 Lakh at 5% interest for traditional artisans.",
+        "description": "PM Vishwakarma is a Central Sector Scheme by the Ministry of MSME to support traditional artisans and craftspersons across 18 designated trades (carpenters, blacksmiths, goldsmiths, potters, cobblers, tailors, etc.). Provides PM Vishwakarma Certificate & ID, basic & advanced skill training with stipend, ₹15,000 modern toolkit voucher, and collateral-free enterprise credit up to ₹3,00,000 at a concessional interest rate of 5%.",
+        "benefits": "PM Vishwakarma Certificate & ID, ₹15,000 digital toolkit voucher, ₹500/day training stipend, collateral-free loans up to ₹3 Lakh at 5% interest.",
+        "category": "Employment & Enterprise",
+        "department": "Ministry of Micro, Small and Medium Enterprises, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://pmvishwakarma.gov.in/",
+        "application_url": "https://pmvishwakarma.gov.in/",
+        "source_url": "https://pmvishwakarma.gov.in/",
+        "application_process": "1. Visit nearest Common Services Centre (CSC) or portal https://pmvishwakarma.gov.in/\n2. Submit Aadhaar and trade details with artisan self-attestation.\n3. Gram Panchayat / Urban Local Body verification.\n4. District Implementation Committee screening and approval.",
+        "age_min": 18,
+        "age_max": 75,
+        "income_max": None,
+        "occupation": "Traditional Artisans & Craftspersons",
+        "target_occupations": ["Artisan / Craftsperson", "Self-employed", "Business Owner", "Shopkeeper"],
+        "target_beneficiary_groups": ["Artisans", "Craftspersons", "Self-employed"],
+        "eligible_states": ["All India"],
+        "education": "No Formal Education",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": True,
+        "max_landholding_acres": None,
+        "exclusions": ["Government servants", "Families with members who availed PM-SVANidhi or PMEGP in last 5 years without repayment"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Traditional Artisan / Self-employed",
+                "rule_description": "Must be engaged in self-employment or traditional trade",
+                "rule_logic": {"field": "has_business", "op": "eq", "value": True},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Minimum Age",
+                "rule_description": "Age must be at least 18 years",
+                "rule_logic": {"field": "age", "op": ">=", "value": 18},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Biometric eKYC"},
+            {"name": "Bank Account Passbook", "mandatory": True, "desc": "Aadhaar linked account"},
+            {"name": "Trade / Artisan Proof", "mandatory": True, "desc": "Gram Panchayat recommendation"}
+        ]
+    },
+    {
+        "slug": "stand-up-india",
+        "name": "Stand-Up India Scheme",
+        "short_description": "Bank loans between ₹10 Lakh and ₹1 Crore for setting up greenfield enterprises by SC, ST, and Women entrepreneurs.",
+        "description": "Stand-Up India Scheme facilitates bank loans between ₹10 Lakh and ₹1 Crore to at least one Scheduled Caste (SC) or Scheduled Tribe (ST) borrower and at least one woman borrower per bank branch for setting up a greenfield enterprise in manufacturing, services, agri-allied activities, or the trading sector.",
+        "benefits": "Composite bank loan (term loan and working capital) between ₹10 Lakh and ₹100 Lakh with credit guarantee support via NCGTC.",
+        "category": "Employment & Enterprise",
+        "department": "Department of Financial Services, Ministry of Finance, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://www.standupmitra.in/",
+        "application_url": "https://www.standupmitra.in/",
+        "source_url": "https://www.standupmitra.in/",
+        "application_process": "1. Visit Stand-Up Mitra portal at https://www.standupmitra.in/\n2. Register as a borrower and fill in project profile details.\n3. Connect with lead bank branches or seek handholding support from SIDBI / NABARD.\n4. Complete appraisal and secure sanction of loan.",
+        "age_min": 18,
+        "age_max": 70,
+        "income_max": None,
+        "occupation": "SC/ST and/or Woman Entrepreneurs",
+        "target_occupations": ["Business Owner", "Self-employed", "Woman Entrepreneur", "Shopkeeper", "Artisan / Craftsperson"],
+        "target_beneficiary_groups": ["Entrepreneurs", "Women Entrepreneurs", "SC/ST Business Owners"],
+        "eligible_states": ["All India"],
+        "education": "No Formal Education",
+        "gender": "All",
+        "social_category": "SC/ST/Woman",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": True,
+        "max_landholding_acres": None,
+        "exclusions": ["Defaults with any commercial or cooperative bank"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Entrepreneur Status",
+                "rule_description": "Must have or seek enterprise/business",
+                "rule_logic": {"field": "has_business", "op": "eq", "value": True},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Minimum Age",
+                "rule_description": "Age must be at least 18 years",
+                "rule_logic": {"field": "age", "op": ">=", "value": 18},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card & PAN Card", "mandatory": True, "desc": "Identity & tax identification"},
+            {"name": "Caste Certificate (if SC/ST)", "mandatory": False, "desc": "Verification for SC/ST category"},
+            {"name": "Project Report", "mandatory": True, "desc": "Detailed project business plan for greenfield enterprise"}
+        ]
+    },
+    {
+        "slug": "mukhyamantri-majhi-ladki-bahin",
+        "name": "Mukhyamantri Majhi Ladki Bahin Yojana",
+        "short_description": "Monthly financial assistance of ₹1,500 transferred directly to eligible women aged 21-65 years in Maharashtra.",
+        "description": "Mukhyamantri Majhi Ladki Bahin Yojana is implemented by the Women and Child Development Department of Maharashtra. Under this scheme, eligible women residing in Maharashtra receive direct financial assistance of ₹1,500 every month (₹18,000 annually) into their Aadhaar-linked bank accounts to promote financial autonomy and nutrition.",
+        "benefits": "₹1,500 per month (₹18,000 per year) direct benefit transfer into woman beneficiary's bank account.",
+        "category": "Social Welfare",
+        "department": "Women and Child Development Department, Government of Maharashtra",
+        "level": "State Scheme",
+        "state": "Maharashtra",
+        "official_source_url": "https://ladkibahin.maharashtra.gov.in/",
+        "application_url": "https://ladkibahin.maharashtra.gov.in/",
+        "source_url": "https://ladkibahin.maharashtra.gov.in/",
+        "application_process": "1. Visit the official portal https://ladkibahin.maharashtra.gov.in/ or the Nari Shakti Doot mobile app.\n2. Enter Aadhaar number and verify via OTP.\n3. Upload Maharashtra Domicile / Ration Card and Orange/Yellow ration card.\n4. Enter Aadhaar-linked bank details and submit.",
+        "age_min": 21,
+        "age_max": 65,
+        "income_max": 250000.0,
+        "occupation": "Women across all occupations",
+        "target_occupations": ["Housewife", "Homemaker", "Woman Entrepreneur", "Self-employed", "Unemployed Person", "Employee", "Student", "Farmer"],
+        "target_beneficiary_groups": ["Women", "Mothers", "Homemakers", "Female Entrepreneurs"],
+        "eligible_states": ["Maharashtra"],
+        "education": "No Formal Education",
+        "gender": "Female",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["Family income above ₹2.5 Lakh", "Income tax payer in family", "Four-wheeler owners (excluding tractor)"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Female Beneficiary",
+                "rule_description": "Must be female",
+                "rule_logic": {"field": "gender", "op": "eq", "value": "Female"},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Age Restriction",
+                "rule_description": "Age must be between 21 and 65 years",
+                "rule_logic": {"field": "age", "op": "between", "value": [21, 65]},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Family Income Below ₹2.5 Lakh",
+                "rule_description": "Annual family income must not exceed ₹2,50,000",
+                "rule_logic": {"field": "annual_income", "op": "<=", "value": 250000.0},
+                "is_mandatory": True
+            },
+            {
+                "rule_name": "Maharashtra Residence",
+                "rule_description": "Must reside in Maharashtra",
+                "rule_logic": {"field": "state", "op": "eq", "value": "Maharashtra"},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Maharashtra Domicile / School Leaving Certificate", "mandatory": True, "desc": "Proof of residence in Maharashtra"},
+            {"name": "Ration Card (Yellow/Orange) or Income Certificate", "mandatory": True, "desc": "Proof of family income below ₹2.5 Lakh"},
+            {"name": "Bank Passbook with Aadhaar seeding", "mandatory": True, "desc": "For DBT transfer"}
+        ]
+    },
+    {
+        "slug": "pm-surya-ghar-muft-bijli-yojana",
+        "name": "PM Surya Ghar: Muft Bijli Yojana",
+        "short_description": "Direct subsidy up to ₹78,000 for installing residential rooftop solar systems and up to 300 units free solar electricity every month.",
+        "description": "PM Surya Ghar: Muft Bijli Yojana is a national initiative launched by the Government of India to illuminate 1 crore households by providing up to 300 units of free solar electricity every month. The scheme offers a central financial assistance (CFA) subsidy of up to ₹78,000 directly into the consumer's bank account for rooftop solar installation.",
+        "benefits": "Direct capital subsidy of ₹30,000 for 1kW, ₹60,000 for 2kW, and ₹78,000 for 3kW or higher solar rooftop systems; up to 300 units free power monthly.",
+        "category": "Social Welfare",
+        "department": "Ministry of New and Renewable Energy, Government of India",
+        "level": "Central Scheme",
+        "state": "All India",
+        "official_source_url": "https://pmsuryaghar.gov.in/",
+        "application_url": "https://pmsuryaghar.gov.in/",
+        "source_url": "https://pmsuryaghar.gov.in/",
+        "application_process": "1. Visit national portal https://pmsuryaghar.gov.in/\n2. Select your State and Electricity Distribution Company (DISCOM).\n3. Enter Electricity Consumer Account Number and mobile number.\n4. Apply for rooftop solar and select registered vendor.\n5. Post-installation net meter inspection by DISCOM releases subsidy directly into bank account via DBT.",
+        "age_min": 18,
+        "age_max": None,
+        "income_max": None,
+        "occupation": "All Citizens / Residential Electricity Consumers",
+        "target_occupations": ["All Categories", "Student", "Farmer", "Teacher", "Housewife", "Employee", "Self-employed", "Shopkeeper", "Salaried Employee", "Business Owner", "Woman Entrepreneur", "Artisan / Craftsperson", "Unemployed Person", "Homemaker"],
+        "target_beneficiary_groups": ["All Citizens", "Households", "Property Owners"],
+        "eligible_states": ["All India"],
+        "education": "No Formal Education / Any",
+        "gender": "All",
+        "social_category": "All",
+        "is_farmer_only": False,
+        "is_student_only": False,
+        "is_business_only": False,
+        "max_landholding_acres": None,
+        "exclusions": ["Commercial and industrial properties not eligible for residential CFA subsidy"],
+        "priority": "High Priority",
+        "application_status": "open",
+        "rules": [
+            {
+                "rule_name": "Minimum Age",
+                "rule_description": "Age must be at least 18 years",
+                "rule_logic": {"field": "age", "op": ">=", "value": 18},
+                "is_mandatory": True
+            }
+        ],
+        "documents": [
+            {"name": "Electricity Bill", "mandatory": True, "desc": "Latest electricity bill showing consumer number"},
+            {"name": "Aadhaar Card", "mandatory": True, "desc": "Identity verification"},
+            {"name": "Cancelled Cheque / Bank Passbook", "mandatory": True, "desc": "For direct subsidy deposit via DBT"}
+        ]
     }
 ]
 
@@ -923,6 +1484,8 @@ class SchemeSyncService:
                         gender=item["gender"],
                         social_category=item["social_category"],
                         is_farmer_only=item.get("is_farmer_only", False),
+                        is_student_only=item.get("is_student_only", False),
+                        is_business_only=item.get("is_business_only", False),
                         max_landholding_acres=item.get("max_landholding_acres"),
                         exclusions=item.get("exclusions", []),
                         target_occupations=item.get("target_occupations"),
@@ -964,6 +1527,8 @@ class SchemeSyncService:
                     scheme.gender = item["gender"]
                     scheme.social_category = item["social_category"]
                     scheme.is_farmer_only = item.get("is_farmer_only", False)
+                    scheme.is_student_only = item.get("is_student_only", False)
+                    scheme.is_business_only = item.get("is_business_only", False)
                     scheme.max_landholding_acres = item.get("max_landholding_acres")
                     scheme.exclusions = item.get("exclusions", [])
                     scheme.target_occupations = item.get("target_occupations")
