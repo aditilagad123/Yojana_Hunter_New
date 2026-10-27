@@ -7,7 +7,10 @@ logger = logging.getLogger(__name__)
 
 # Normalize database URL for SQLAlchemy
 db_url = config.DATABASE_URL
-if db_url.startswith("postgresql://"):
+if db_url.startswith("postgres://"):
+    # Render PostgreSQL URLs often use postgres://; convert to postgresql+psycopg://
+    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif db_url.startswith("postgresql://"):
     # Standardize to postgresql+psycopg if dialect not specified
     db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 

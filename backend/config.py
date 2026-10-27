@@ -29,6 +29,7 @@ class Config:
         DATABASE_URL: str = f"postgresql+psycopg://{DB_USER}:{encoded_pwd}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "yojana-hunter-secret-key-change-in-production")
+    JWT_SECRET: str = os.getenv("JWT_SECRET", os.getenv("SECRET_KEY", "yojana-hunter-secret-key-change-in-production"))
     CORS_ORIGINS: list = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
